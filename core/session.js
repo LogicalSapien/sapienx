@@ -18,9 +18,7 @@ export class SessionManager {
   }
 
   _generateSessionId(channel) {
-    const date = new Date().toISOString().slice(0, 10);
-    const short = uuidv4().slice(0, 6);
-    return `${channel}-${date}-${short}`;
+    return uuidv4();
   }
 
   _isExpired(session) {
@@ -125,7 +123,7 @@ export class SessionManager {
     }
 
     const session = {
-      sessionId: `${channel}-${name}`,
+      sessionId: uuidv4(),
       channel,
       from,
       lastActive: Date.now(),
