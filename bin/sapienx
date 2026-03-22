@@ -4,10 +4,61 @@ import { Command } from 'commander';
 import { execSync, spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..');
+
+// --- First-run setup ---
+async function ensureSetup() {
+  const envPath = join(projectRoot, '.env');
+  if (existsSync(envPath)) return; // already configured
+
+  console.log('\n=== SapienX First-Run Setup ===\n');
+  console.log('No .env file found. Let me set things up.\n');
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+
+  const name = await ask('Your name: ');
+  const phone = await ask('Your WhatsApp phone (with country code, no +): ');
+  const apiKey = await ask('Anthropic API key (blank to skip, use claude login instead): ');
+
+  rl.close();
+
+  // Build .env content
+  const examplePath = join(projectRoot, '.env.example');
+  let envContent = existsSync(examplePath)
+    ? readFileSync(examplePath, 'utf-8')
+    : 'OWNER_PHONE=\nOWNER_NAME=\nANTHROPIC_API_KEY=\nTELEGRAM_BOT_TOKEN=\n';
+
+  envContent = envContent.replace(/^OWNER_PHONE=.*/m, `OWNER_PHONE=${phone}`);
+  envContent = envContent.replace(/^OWNER_NAME=.*/m, `OWNER_NAME=${name}`);
+  if (apiKey) {
+    envContent = envContent.replace(/^ANTHROPIC_API_KEY=.*/m, `ANTHROPIC_API_KEY=${apiKey}`);
+  }
+
+  writeFileSync(envPath, envContent);
+  console.log('\n.env created.');
+
+  // Copy schedules if needed
+  const schedulesPath = join(projectRoot, 'data', 'schedules.json');
+  const schedulesExample = join(projectRoot, 'data', 'schedules.example.json');
+  if (!existsSync(schedulesPath) && existsSync(schedulesExample)) {
+    copyFileSync(schedulesExample, schedulesPath);
+  }
+
+  // Check Claude CLI
+  try {
+    execSync('claude --version', { stdio: 'ignore' });
+    console.log('Claude CLI: found.');
+  } catch {
+    console.log('Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code');
+  }
+
+  console.log('\nSetup complete!\n');
+}
 
 const program = new Command();
 
@@ -20,7 +71,8 @@ program
 program
   .command('start')
   .description('Start SapienX daemon (via pm2)')
-  .action(() => {
+  .action(async () => {
+    await ensureSetup();
     try {
       execSync(`pm2 start ${join(projectRoot, 'ecosystem.config.js')}`, {
         stdio: 'inherit',
@@ -68,7 +120,8 @@ program
   .description('Start TUI-only mode')
   .option('--cli <adapter>', 'CLI adapter to use')
   .option('--model <model>', 'Model override')
-  .action((opts) => {
+  .action(async (opts) => {
+    await ensureSetup();
     const args = [join(projectRoot, 'index.js'), '--tui-only'];
     if (opts.cli) args.push('--cli', opts.cli);
     if (opts.model) args.push('--model', opts.model);
@@ -77,6 +130,29 @@ program
       cwd: projectRoot
     });
     child.on('exit', (code) => process.exit(code));
+  });
+
+// sapienx setup
+program
+  .command('setup')
+  .description('Run first-time setup (creates .env, checks deps)')
+  .action(async () => {
+    const envPath = join(projectRoot, '.env');
+    if (existsSync(envPath)) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await new Promise(resolve =>
+        rl.question('.env already exists. Overwrite? (y/N): ', resolve)
+      );
+      rl.close();
+      if (answer.toLowerCase() !== 'y') {
+        console.log('Setup cancelled.');
+        return;
+      }
+      // Remove existing .env so ensureSetup runs fresh
+      const { unlinkSync } = await import('node:fs');
+      unlinkSync(envPath);
+    }
+    await ensureSetup();
   });
 
 // sapienx status
