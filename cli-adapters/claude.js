@@ -13,6 +13,7 @@ export class ClaudeAdapter extends BaseAdapter {
       '-p', prompt,
       '--session-id', sessionId,
       '--output-format', this.config.outputFormat || 'stream-json',
+      '--verbose',
       '--max-turns', String(options.maxTurns || this.config.maxTurns || 5)
     ];
 
