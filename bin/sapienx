@@ -1,0 +1,228 @@
+#!/usr/bin/env node
+
+import { Command } from 'commander';
+import { execSync, spawn } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { readFileSync, existsSync } from 'node:fs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const projectRoot = join(__dirname, '..');
+
+const program = new Command();
+
+program
+  .name('sapienx')
+  .description('SapienX — Personal AI Assistant')
+  .version('1.0.0');
+
+// sapienx start
+program
+  .command('start')
+  .description('Start SapienX daemon (via pm2)')
+  .action(() => {
+    try {
+      execSync(`pm2 start ${join(projectRoot, 'ecosystem.config.js')}`, {
+        stdio: 'inherit',
+        cwd: projectRoot
+      });
+    } catch {
+      console.log('pm2 not found. Starting directly...');
+      const child = spawn('node', [join(projectRoot, 'index.js')], {
+        stdio: 'inherit',
+        cwd: projectRoot,
+        detached: true
+      });
+      child.unref();
+      console.log(`SapienX started (PID: ${child.pid})`);
+    }
+  });
+
+// sapienx stop
+program
+  .command('stop')
+  .description('Stop SapienX daemon')
+  .action(() => {
+    try {
+      execSync('pm2 stop sapienx', { stdio: 'inherit' });
+    } catch {
+      console.log('pm2 not available or SapienX not running.');
+    }
+  });
+
+// sapienx restart
+program
+  .command('restart')
+  .description('Restart SapienX daemon')
+  .action(() => {
+    try {
+      execSync('pm2 restart sapienx', { stdio: 'inherit' });
+    } catch {
+      console.log('pm2 not available. Stop and start manually.');
+    }
+  });
+
+// sapienx tui
+program
+  .command('tui')
+  .description('Start TUI-only mode')
+  .option('--cli <adapter>', 'CLI adapter to use')
+  .option('--model <model>', 'Model override')
+  .action((opts) => {
+    const args = [join(projectRoot, 'index.js'), '--tui-only'];
+    if (opts.cli) args.push('--cli', opts.cli);
+    if (opts.model) args.push('--model', opts.model);
+    const child = spawn('node', args, {
+      stdio: 'inherit',
+      cwd: projectRoot
+    });
+    child.on('exit', (code) => process.exit(code));
+  });
+
+// sapienx status
+program
+  .command('status')
+  .description('Show SapienX status')
+  .action(() => {
+    try {
+      const result = execSync('pm2 show sapienx', { encoding: 'utf-8' });
+      console.log(result);
+    } catch {
+      console.log('SapienX is not running via pm2.');
+    }
+  });
+
+// sapienx version
+program
+  .command('version')
+  .description('Show version info')
+  .action(() => {
+    const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf-8'));
+    let gitCommit = 'unknown';
+    try {
+      gitCommit = execSync('git rev-parse --short HEAD', {
+        cwd: projectRoot,
+        encoding: 'utf-8'
+      }).trim();
+    } catch {}
+    console.log(`SapienX v${pkg.version} (commit ${gitCommit})`);
+    console.log(`Node.js ${process.version}`);
+    try {
+      const claudeVersion = execSync('claude --version', { encoding: 'utf-8' }).trim();
+      console.log(`Claude CLI: ${claudeVersion}`);
+    } catch {
+      console.log('Claude CLI: not installed');
+    }
+  });
+
+// sapienx upgrade
+program
+  .command('upgrade')
+  .description('Pull latest code and restart')
+  .option('--dry-run', 'Show pending changes only')
+  .action((opts) => {
+    if (opts.dryRun) {
+      execSync('git fetch && git log HEAD..origin/main --oneline', {
+        stdio: 'inherit',
+        cwd: projectRoot
+      });
+      return;
+    }
+    console.log('Pulling latest...');
+    execSync('git pull origin main', { stdio: 'inherit', cwd: projectRoot });
+    console.log('Installing dependencies...');
+    execSync('npm install', { stdio: 'inherit', cwd: projectRoot });
+    console.log('Restarting...');
+    try {
+      execSync('pm2 restart sapienx', { stdio: 'inherit' });
+    } catch {
+      console.log('pm2 not available. Restart manually: sapienx start');
+    }
+  });
+
+// sapienx message
+program
+  .command('message <text>')
+  .description('Send a message via a channel')
+  .requiredOption('--channel <channel>', 'Channel to send through')
+  .requiredOption('--to <recipient>', 'Recipient ID')
+  .action(async (text, opts) => {
+    // Import and boot just enough to send one message
+    const { default: config } = await import(join(projectRoot, 'config', 'sapienx.config.js'));
+    const { createBus } = await import(join(projectRoot, 'core', 'bus.js'));
+    const bus = createBus();
+
+    if (opts.channel === 'whatsapp') {
+      const { WhatsAppChannel } = await import(join(projectRoot, 'channels', 'whatsapp.js'));
+      const wa = new WhatsAppChannel(bus, config.channels.whatsapp);
+
+      bus.on('channel:ready', async () => {
+        await wa.send({
+          to: opts.to,
+          text,
+          metadata: {}
+        });
+        console.log(`Message sent to ${opts.to} via WhatsApp.`);
+        await wa.stop();
+        process.exit(0);
+      });
+
+      await wa.start();
+
+      // Timeout after 30s
+      setTimeout(() => {
+        console.error('Timeout waiting for WhatsApp connection.');
+        process.exit(1);
+      }, 30000);
+    } else {
+      console.log(`Channel "${opts.channel}" not supported for direct messaging yet.`);
+    }
+  });
+
+// sapienx skills
+program
+  .command('skills')
+  .description('List loaded skills')
+  .action(async () => {
+    const { SkillLoader } = await import(join(projectRoot, 'skills', 'loader.js'));
+    const { default: config } = await import(join(projectRoot, 'config', 'sapienx.config.js'));
+    const paths = config.skills.paths.map(p =>
+      p.startsWith('.') ? join(projectRoot, p) : p
+    );
+    const loader = new SkillLoader(paths);
+    const skills = await loader.loadAll();
+    for (const s of skills) {
+      console.log(`  ${s.name} [${s.mode}] — ${s.description}`);
+      console.log(`    triggers: ${s.triggers.join(', ')}`);
+    }
+  });
+
+// sapienx health
+program
+  .command('health')
+  .description('Check system health')
+  .action(async () => {
+    console.log('Checking health...');
+
+    // Claude CLI
+    try {
+      execSync('claude --version', { stdio: 'ignore' });
+      console.log('  Claude CLI: OK');
+    } catch {
+      console.log('  Claude CLI: NOT FOUND');
+    }
+
+    // Node.js
+    console.log(`  Node.js: ${process.version}`);
+
+    // pm2
+    try {
+      const status = execSync('pm2 show sapienx --no-color', { encoding: 'utf-8' });
+      const running = status.includes('online');
+      console.log(`  Daemon: ${running ? 'RUNNING' : 'STOPPED'}`);
+    } catch {
+      console.log('  Daemon: pm2 not available');
+    }
+  });
+
+program.parse();
