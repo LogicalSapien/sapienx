@@ -38,7 +38,25 @@ export class WhatsAppChannel extends BaseChannel {
       this.bus.emitError('whatsapp', new Error(`Disconnected: ${reason}`));
     });
 
-    this.client.on('message', async (msg) => {
+    // Use message_create to catch ALL incoming messages (including self-chat).
+    // The 'message' event doesn't fire for messages you send to yourself.
+    this._processedIds = new Set();
+
+    this.client.on('message_create', async (msg) => {
+      // Skip messages we sent as responses
+      if (msg.fromMe) return;
+      // Skip status updates
+      if (msg.isStatus) return;
+      // Deduplicate
+      const msgId = msg.id._serialized;
+      if (this._processedIds.has(msgId)) return;
+      this._processedIds.add(msgId);
+      // Keep set from growing forever
+      if (this._processedIds.size > 1000) {
+        const arr = [...this._processedIds];
+        this._processedIds = new Set(arr.slice(-500));
+      }
+      console.log(`[WhatsApp] Message from ${msg.from}: ${msg.body.substring(0, 50)}`);
       await this._handleIncoming(msg);
     });
 

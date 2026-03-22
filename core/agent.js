@@ -258,7 +258,7 @@ export class Agent {
 
     this._activeInvocations++;
     const model = this._resolveModel(session, msg);
-    const systemPrompt = this._buildSystemPrompt(session);
+    const systemPrompt = this._buildSystemPrompt(session, msg);
 
     try {
       const fullPrompt = `${systemPrompt}\n\nUser: ${msg.text}`;
@@ -298,7 +298,7 @@ export class Agent {
     const model = this._resolveModel(session, msg);
 
     try {
-      const systemPrompt = `${this._buildSystemPrompt(session)}\n\n--- Active Skill: ${skill.name} ---\n${skill.promptBody}`;
+      const systemPrompt = `${this._buildSystemPrompt(session, msg)}\n\n--- Active Skill: ${skill.name} ---\n${skill.promptBody}`;
       const fullPrompt = `${systemPrompt}\n\nUser: ${msg.text}`;
       const result = await adapter.invoke(fullPrompt, session.sessionId, { model });
       this._reply(msg, result);
@@ -310,18 +310,25 @@ export class Agent {
     }
   }
 
-  _buildSystemPrompt(session) {
+  _buildSystemPrompt(session, msg) {
     const skills = this.skillLoader.getSkillSummaries();
     const skillList = skills.map(s => `- ${s.name}: ${s.description} (triggers: ${s.triggers.join(', ')})`).join('\n');
     const summary = session._previousSummary || '';
+    const ownerName = this.config.owner?.name || 'the owner';
+    const channel = msg?.channel || session.channel || 'unknown';
 
     return [
-      'You are SapienX, a personal AI assistant.',
+      `You are SapienX, a personal AI assistant for ${ownerName}.`,
+      `You are a Node.js daemon running on ${ownerName}'s system.`,
+      `The user is currently messaging you via the ${channel.toUpperCase()} channel.`,
+      channel === 'tui' ? 'They are using the terminal/TUI interface directly.' : '',
+      channel === 'whatsapp' ? 'They are messaging you via WhatsApp.' : '',
+      '',
       'You have access to the following skills:',
       skillList,
       '',
       summary ? `Previous conversation was about: ${summary}` : '',
-      'Respond concisely and helpfully.'
+      'Respond concisely and helpfully. Keep responses short for WhatsApp.'
     ].filter(Boolean).join('\n');
   }
 
