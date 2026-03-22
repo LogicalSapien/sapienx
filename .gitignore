@@ -1,0 +1,8 @@
+node_modules/
+.env
+.wwebjs_auth/
+data/sessions.json
+data/schedules.json
+.sapienx-ready
+*.log
+.DS_Store
