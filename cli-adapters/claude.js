@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { BaseAdapter } from './base.js';
 
 export class ClaudeAdapter extends BaseAdapter {
@@ -9,9 +10,12 @@ export class ClaudeAdapter extends BaseAdapter {
   }
 
   buildArgs(prompt, sessionId, options = {}) {
+    // Generate a fresh UUID per invocation to avoid "session already in use" errors.
+    // Claude CLI locks sessions while running — each -p call needs its own ID.
+    const cliSessionId = randomUUID();
     const args = [
       '-p', prompt,
-      '--session-id', sessionId,
+      '--session-id', cliSessionId,
       '--output-format', this.config.outputFormat || 'stream-json',
       '--verbose',
       '--max-turns', String(options.maxTurns || this.config.maxTurns || 5)
@@ -34,17 +38,9 @@ export class ClaudeAdapter extends BaseAdapter {
     try {
       const parsed = JSON.parse(line);
 
-      if (parsed.type === 'assistant' && parsed.message?.content) {
-        const textParts = parsed.message.content
-          .filter(c => c.type === 'text')
-          .map(c => c.text);
-        return textParts.length > 0 ? textParts.join('') : null;
-      }
-
-      if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-        return parsed.delta.text;
-      }
-
+      // Use only the result message — it contains the final complete text.
+      // Skip assistant messages to avoid duplicates (assistant + result both
+      // contain the same text).
       if (parsed.type === 'result' && parsed.result) {
         return parsed.result;
       }

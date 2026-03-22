@@ -49,8 +49,12 @@ export class Gateway {
       return;
     }
 
+    // Normalize phone numbers for comparison (strip + prefix)
+    const ownerPhone = (this.config.owner.phone || '').replace(/^\+/, '');
+    const senderPhone = (msg.from || '').replace(/^\+/, '');
+
     // Check pending replies from non-owner (smart task replies)
-    if (msg.from !== this.config.owner.phone) {
+    if (senderPhone !== ownerPhone) {
       const reply = this._matchPendingReply(msg);
       if (reply) {
         this.bus.emit('task:reply', { taskId: reply.taskId, message: msg });

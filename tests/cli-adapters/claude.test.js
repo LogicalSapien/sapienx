@@ -29,9 +29,12 @@ describe('ClaudeAdapter', () => {
     const args = adapter.buildArgs('hello', 'session-1', {});
     expect(args).toContain('-p');
     expect(args).toContain('--session-id');
-    expect(args).toContain('session-1');
+    // Session ID is a fresh UUID per invocation, not the passed-in value
+    const sessionIdIndex = args.indexOf('--session-id') + 1;
+    expect(args[sessionIdIndex]).toMatch(/^[0-9a-f-]{36}$/);
     expect(args).toContain('--output-format');
     expect(args).toContain('stream-json');
+    expect(args).toContain('--verbose');
     expect(args).toContain('--model');
     expect(args).toContain('sonnet');
     expect(args).toContain('--max-turns');
@@ -55,13 +58,22 @@ describe('ClaudeAdapter', () => {
     expect(args).toContain('Bash,Read');
   });
 
-  test('parseStreamLine extracts assistant text', () => {
+  test('parseStreamLine extracts result text', () => {
+    const line = JSON.stringify({
+      type: 'result',
+      result: 'Hello!'
+    });
+    const result = adapter.parseStreamLine(line);
+    expect(result).toBe('Hello!');
+  });
+
+  test('parseStreamLine skips assistant messages to avoid duplicates', () => {
     const line = JSON.stringify({
       type: 'assistant',
       message: { content: [{ type: 'text', text: 'Hello!' }] }
     });
     const result = adapter.parseStreamLine(line);
-    expect(result).toBe('Hello!');
+    expect(result).toBeNull();
   });
 
   test('parseStreamLine returns null for non-assistant types', () => {
