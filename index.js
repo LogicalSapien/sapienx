@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const tuiOnly = process.argv.includes('--tui-only');
+const daemonMode = process.argv.includes('--daemon');
 
 async function main() {
   console.log('Starting SapienX...');
@@ -71,7 +72,7 @@ async function main() {
   // 9. Start channels
   const channels = [];
 
-  if (config.channels.tui.enabled || tuiOnly) {
+  if (!daemonMode && (config.channels.tui.enabled || tuiOnly)) {
     const tui = new TuiChannel(bus, config.channels.tui);
     await tui.start();
     channels.push(tui);

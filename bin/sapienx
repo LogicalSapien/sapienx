@@ -80,13 +80,14 @@ program
       });
     } catch {
       console.log('pm2 not found. Starting directly...');
-      const child = spawn('node', [join(projectRoot, 'index.js')], {
-        stdio: 'inherit',
+      const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
+        stdio: 'ignore',
         cwd: projectRoot,
         detached: true
       });
       child.unref();
-      console.log(`SapienX started (PID: ${child.pid})`);
+      console.log(`SapienX daemon started (PID: ${child.pid}). WhatsApp only, no TUI.`);
+      console.log('Use "sapienx tui" for interactive mode.');
     }
   });
 
