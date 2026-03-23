@@ -312,9 +312,8 @@ async function runConfigure() {
             }))
           }
         ]);
-        console.log(`  DEBUG: selected groups = ${JSON.stringify(groupAnswer.allowedGroups)}`);
         allowedGroups = groupAnswer.allowedGroups.join(',');
-        console.log(`  DEBUG: allowedGroups string = "${allowedGroups}"`);
+        console.log(`  Selected ${groupAnswer.allowedGroups.length} group(s).`);
       } else {
         // Fallback to manual input
         const groupAnswer = await inquirer.prompt([
@@ -425,7 +424,7 @@ async function runConfigure() {
 
   const startAnswer = await inquirer.prompt([
     {
-      type: 'list',
+      type: 'rawlist',
       name: 'startMode',
       message: 'Start SapienX now?',
       choices: [
