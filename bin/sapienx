@@ -300,7 +300,9 @@ async function runConfigure() {
             }))
           }
         ]);
+        console.log(`  DEBUG: selected groups = ${JSON.stringify(groupAnswer.allowedGroups)}`);
         allowedGroups = groupAnswer.allowedGroups.join(',');
+        console.log(`  DEBUG: allowedGroups string = "${allowedGroups}"`);
       } else {
         // Fallback to manual input
         const groupAnswer = await inquirer.prompt([
