@@ -1,9 +1,21 @@
 import { v4 as uuidv4 } from 'uuid';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export class Agent {
   constructor(bus, config, { sessionManager, skillLoader, cliAdapters, gateway, scheduler }) {
     this.bus = bus;
     this.config = config;
+
+    // Load SAPIENX.md reference doc for system prompt
+    try {
+      this._referenceDoc = readFileSync(join(__dirname, '..', 'SAPIENX.md'), 'utf-8');
+    } catch {
+      this._referenceDoc = '';
+    }
     this.sessionManager = sessionManager;
     this.skillLoader = skillLoader;
     this.cliAdapters = cliAdapters;
@@ -328,7 +340,11 @@ export class Agent {
       skillList,
       '',
       summary ? `Previous conversation was about: ${summary}` : '',
-      'Respond concisely and helpfully. Keep responses short for WhatsApp.'
+      'Respond concisely and helpfully. Keep responses short for WhatsApp.',
+      '',
+      this._referenceDoc ? '--- SapienX Reference Documentation ---' : '',
+      this._referenceDoc ? 'Use this to answer any questions about SapienX usage, configuration, commands, architecture, or troubleshooting.' : '',
+      this._referenceDoc || ''
     ].filter(Boolean).join('\n');
   }
 
