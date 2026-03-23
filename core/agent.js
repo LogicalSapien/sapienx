@@ -22,13 +22,40 @@ export class Agent {
     this.gateway = gateway;
     this.scheduler = scheduler;
     this._activeInvocations = 0;
-    this._queue = [];
+    this._sessionQueues = new Map(); // per-session FIFO to prevent concurrent CLI calls
+    this._sessionProcessing = new Map();
 
-    this.bus.on('message:routed', (msg) => this._handleMessage(msg));
+    this.bus.on('message:routed', (msg) => this._enqueueMessage(msg));
     this.bus.on('schedule:reminder', (data) => this._handleReminder(data));
     this.bus.on('schedule:cron', (data) => this._handleCron(data));
     this.bus.on('schedule:smart', (data) => this._handleSmartTask(data));
     this.bus.on('task:reply', (data) => this._handleTaskReply(data));
+  }
+
+  _enqueueMessage(msg) {
+    const session = this.sessionManager.resolveSession(msg.channel, msg.from);
+    const key = session.sessionId;
+    if (!this._sessionQueues.has(key)) {
+      this._sessionQueues.set(key, []);
+    }
+    this._sessionQueues.get(key).push(msg);
+    if (!this._sessionProcessing.get(key)) {
+      this._processSessionQueue(key);
+    }
+  }
+
+  async _processSessionQueue(key) {
+    this._sessionProcessing.set(key, true);
+    const queue = this._sessionQueues.get(key);
+    while (queue && queue.length > 0) {
+      const msg = queue.shift();
+      try {
+        await this._handleMessage(msg);
+      } catch (err) {
+        this.bus.emitError('agent', err);
+      }
+    }
+    this._sessionProcessing.set(key, false);
   }
 
   async _handleMessage(msg) {
