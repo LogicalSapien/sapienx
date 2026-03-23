@@ -328,14 +328,16 @@ async function runConfigure() {
       }
     }
 
-    // WhatsApp session management
+    // WhatsApp session management (at the end, clearly separated)
     const waAuthPath = join(projectRoot, '.wwebjs_auth');
     if (existsSync(waAuthPath)) {
+      console.log('\n  WhatsApp is linked and connected. No need to change this');
+      console.log('  unless WhatsApp stops working or you want to link a different phone.');
       const waSessionAnswer = await inquirer.prompt([
         {
           type: 'confirm',
           name: 'reset',
-          message: 'WhatsApp session exists. Reset and re-scan QR?',
+          message: 'Re-link WhatsApp? (WARNING: will disconnect current session)',
           default: false
         }
       ]);
