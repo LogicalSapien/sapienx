@@ -43,10 +43,17 @@ export class WhatsAppChannel extends BaseChannel {
     this._processedIds = new Set();
 
     this.client.on('message_create', async (msg) => {
-      // Skip messages we sent as responses
-      if (msg.fromMe) return;
       // Skip status updates
       if (msg.isStatus) return;
+
+      // For self-chat (messaging yourself): fromMe is always true,
+      // so we process those. For other chats: skip our own outgoing messages.
+      const isSelfChat = msg.from === msg.to;
+      if (msg.fromMe && !isSelfChat) return;
+
+      // In self-chat, skip messages that SapienX sent as responses.
+      // We track IDs of messages we send to avoid processing our own replies.
+      if (msg.fromMe && isSelfChat && this._sentIds?.has(msg.id._serialized)) return;
       // Deduplicate
       const msgId = msg.id._serialized;
       if (this._processedIds.has(msgId)) return;
@@ -114,7 +121,15 @@ export class WhatsAppChannel extends BaseChannel {
 
     const chatId = to.includes('@') ? to : `${to}@c.us`;
     const formatted = toWhatsApp(message.text);
-    await this.client.sendMessage(chatId, formatted);
+    const sent = await this.client.sendMessage(chatId, formatted);
+    // Track sent message IDs so we don't process our own replies in self-chat
+    if (!this._sentIds) this._sentIds = new Set();
+    if (sent?.id?._serialized) this._sentIds.add(sent.id._serialized);
+    // Prevent set from growing forever
+    if (this._sentIds.size > 500) {
+      const arr = [...this._sentIds];
+      this._sentIds = new Set(arr.slice(-250));
+    }
   }
 
   isConnected() {
