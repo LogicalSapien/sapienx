@@ -28,6 +28,7 @@ const paths = {
   soul: join(sapienxHome, 'SOUL.md'),
   identity: join(sapienxHome, 'IDENTITY.md'),
   user: join(sapienxHome, 'USER.md'),
+  heartbeat: join(sapienxHome, 'HEARTBEAT.md'),
 
   // Persistent memory
   memory: join(sapienxHome, 'memory'),

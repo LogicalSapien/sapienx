@@ -209,6 +209,40 @@ export class Agent {
         this._reply(msg, this._getHelp());
         return true;
       }
+      case '/heartbeat': {
+        if (args[0] === 'start') {
+          const interval = args[1] || '30m';
+          const schedule = args[2] || '0 */1 * * *'; // default: every hour
+          if (this.scheduler) {
+            // Read HEARTBEAT.md for the check prompt
+            let heartbeatPrompt = 'Check if anything needs attention. Read ~/.sapienx/defaults/HEARTBEAT.md for instructions. If nothing urgent, stay silent.';
+            try {
+              const hbPath = join(paths.home, 'HEARTBEAT.md');
+              if (existsSync(hbPath)) {
+                heartbeatPrompt = readFileSync(hbPath, 'utf-8');
+              }
+            } catch {}
+            const id = this.scheduler.addCron({
+              id: 'heartbeat',
+              schedule,
+              command: `ai: ${heartbeatPrompt}`,
+              channel: msg.channel,
+              to: msg.metadata?.chatId || msg.from
+            });
+            this._reply(msg, `Heartbeat started (${schedule}). Edit ~/.sapienx/HEARTBEAT.md to customize checks.`);
+          }
+          return true;
+        }
+        if (args[0] === 'stop') {
+          if (this.scheduler) {
+            this.scheduler.deleteTask('heartbeat');
+            this._reply(msg, 'Heartbeat stopped.');
+          }
+          return true;
+        }
+        this._reply(msg, 'Usage: /heartbeat start [schedule] | /heartbeat stop\nDefault: every hour. Example: /heartbeat start "*/30 * * * *"');
+        return true;
+      }
       default:
         // Check if it's a skill-specific command like /vps
         return false;
@@ -233,20 +267,30 @@ export class Agent {
   _getHelp() {
     return [
       '*SapienX Commands*',
+      '',
+      '*Sessions*',
       '/new — New session',
-      '/session <name> — Pin a named session',
-      '/session close — Unpin session',
+      '/session <name> — Pin session',
+      '/session close — Unpin',
       '/sessions — List sessions',
-      '/cli <name> — Switch CLI adapter',
+      '',
+      '*Scheduling*',
+      '/remind in 5m "msg" — Set reminder',
+      '/remind at 14:30 "msg" — Remind at time',
+      '/cron "expr" cmd — Recurring task',
+      '/task list — List tasks',
+      '/task pause/resume/delete <id>',
+      '',
+      '*Heartbeat*',
+      '/heartbeat start — Start proactive checks (hourly)',
+      '/heartbeat start "*/30 * * * *" — Custom schedule',
+      '/heartbeat stop — Stop heartbeat',
+      '',
+      '*System*',
+      '/cli <name> — Switch CLI',
       '/model <name> — Switch model',
-      '/model auto — Auto-select model',
       '/status — System status',
-      '/version — Version info',
-      '/vps <cmd> — Run shell command',
-      '/remind in <time> "msg" — Set reminder',
-      '/cron "<expr>" <cmd> — Schedule recurring command',
-      '/task list — List scheduled tasks',
-      '/task pause/resume/delete <id> — Manage tasks',
+      '/version — Version',
       '/help — This message'
     ].join('\n');
   }
@@ -413,7 +457,7 @@ export class Agent {
     const defaultsDir = join(projectRoot, 'defaults');
 
     // Copy defaults to ~/.sapienx/ if missing
-    for (const file of ['SOUL.md', 'IDENTITY.md', 'USER.md']) {
+    for (const file of ['SOUL.md', 'IDENTITY.md', 'USER.md', 'HEARTBEAT.md']) {
       const target = join(paths.home, file);
       const source = join(defaultsDir, file);
       if (!existsSync(target) && existsSync(source)) {
@@ -439,11 +483,17 @@ export class Agent {
     const ownerName = this.config.owner?.name || 'the owner';
     const channel = msg?.channel || session.channel || 'unknown';
 
+    const isGroup = msg?.metadata?.isGroup || false;
+    const groupName = msg?.metadata?.groupName || msg?.metadata?.groupId || '';
+    const today = new Date().toISOString().split('T')[0];
+
     return [
       // Identity layer
       this._identity,
       `You are a personal AI assistant for ${ownerName}.`,
       `Running on ${ownerName}'s system. Channel: ${channel.toUpperCase()}.`,
+      `Date: ${today}. Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`,
+      isGroup ? `\nYou are in a GROUP CHAT${groupName ? ` (${groupName})` : ''}. Apply group chat intelligence rules from your SOUL — only respond when valuable.` : '',
       '',
       // Soul layer (capabilities, behavior, scheduling)
       this._soul,
@@ -451,6 +501,10 @@ export class Agent {
       // Dynamic context
       'Available skills (fast-path, no AI needed):',
       skillList,
+      '',
+      // Memory context
+      `Daily log: ~/.sapienx/memory/${today}.md — read it for today's context, write to it to remember things.`,
+      'Long-term memory: ~/.sapienx/memory/MEMORY.md — read for curated context.',
       '',
       summary ? `Previous conversation was about: ${summary}` : '',
       '',
@@ -615,14 +669,18 @@ export class Agent {
   }
 
   async _handleCron(data) {
-    // Cron commands are processed as if the owner sent them
+    const command = data.command || '';
+
+    // ai: prefix means route through Claude CLI
+    const text = command.startsWith('ai:') ? command.slice(3).trim() : command;
+
     this.bus.emit('message:routed', {
       id: uuidv4(),
       channel: data.channel,
       from: this.config.owner.phone || 'tui',
-      text: data.command,
+      text,
       timestamp: Date.now(),
-      metadata: {}
+      metadata: { chatId: data.to, fromCron: true }
     });
   }
 
