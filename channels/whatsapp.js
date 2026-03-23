@@ -39,33 +39,7 @@ export class WhatsAppChannel extends BaseChannel {
       this.bus.emitError('whatsapp', new Error(`Disconnected: ${reason}`));
     });
 
-    // message_create fires for ALL messages — both incoming and outgoing.
-    // We skip: status broadcasts, and messages WE sent as responses.
-    // We process everything else — including self-chat, group msgs, etc.
-    this.client.on('message_create', async (msg) => {
-      // Skip status broadcasts
-      if (msg.isStatus) return;
-
-      // Skip messages that SapienX sent as responses (tracked by ID)
-      if (this._sentIds.has(msg.id._serialized)) return;
-
-      // Skip our own outgoing messages UNLESS it's to our own number (self-chat)
-      // In self-chat, msg.fromMe is true for messages you type on your phone too
-      if (msg.fromMe) {
-        // Check if this is a self-chat by looking at the chat
-        const chat = await msg.getChat();
-        if (!chat.isGroup && chat.id._serialized === msg.from) {
-          // This IS self-chat — process it
-          console.log(`[WhatsApp] Self-chat message: "${msg.body?.substring(0, 50)}"`);
-        } else {
-          // Regular outgoing message to someone else — skip
-          return;
-        }
-      }
-
-      console.log(`[WhatsApp] Message from ${msg.from}: "${msg.body?.substring(0, 50)}"`);
-      await this._handleIncoming(msg);
-    });
+    this._attachMessageListener();
 
     this.bus.on('message:outgoing', async (msg) => {
       if (msg.channel === 'whatsapp') {
@@ -73,7 +47,65 @@ export class WhatsAppChannel extends BaseChannel {
       }
     });
 
-    await this.client.initialize();
+    // Initialize with retry — puppeteer can crash during QR scan navigation
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await this.client.initialize();
+        break;
+      } catch (err) {
+        console.error(`[WhatsApp] Init attempt ${attempt}/3 failed: ${err.message}`);
+        if (attempt === 3) {
+          console.error('[WhatsApp] Failed to initialize after 3 attempts.');
+          this.bus.emitError('whatsapp', err);
+          return;
+        }
+        // Destroy and recreate client for retry
+        try { await this.client.destroy(); } catch {}
+        this.client = new Client({
+          authStrategy: new LocalAuth(),
+          puppeteer: {
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+          }
+        });
+        // Re-attach event listeners
+        this.client.on('qr', (qr) => {
+          console.log('\n[WhatsApp] Scan this QR code with your phone:');
+          qrcode.generate(qr, { small: true });
+        });
+        this.client.on('ready', () => {
+          this.ready = true;
+          console.log('[WhatsApp] Connected and ready.');
+          this.bus.emit('channel:ready', { channel: 'whatsapp' });
+        });
+        this.client.on('disconnected', (reason) => {
+          this.ready = false;
+          console.error(`[WhatsApp] Disconnected: ${reason}`);
+        });
+        this._attachMessageListener();
+        console.log(`[WhatsApp] Retrying in 3 seconds...`);
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
+  }
+
+  _attachMessageListener() {
+    this.client.on('message_create', async (msg) => {
+      if (msg.isStatus) return;
+      if (this._sentIds.has(msg.id._serialized)) return;
+
+      if (msg.fromMe) {
+        const chat = await msg.getChat();
+        if (!chat.isGroup && chat.id._serialized === msg.from) {
+          console.log(`[WhatsApp] Self-chat message: "${msg.body?.substring(0, 50)}"`);
+        } else {
+          return;
+        }
+      }
+
+      console.log(`[WhatsApp] Message from ${msg.from}: "${msg.body?.substring(0, 50)}"`);
+      await this._handleIncoming(msg);
+    });
   }
 
   async _handleIncoming(msg) {
