@@ -319,14 +319,24 @@ export class Agent {
       this._reply(msg, result);
       this._addToHistory(msg.channel, msg.from, msg.text, result);
     } catch (err) {
-      // Retry once
+      if (err.isAuthError) {
+        console.error('[Agent] Claude auth error — login needed');
+        this._reply(msg, '⚠️ Claude CLI session expired. Please SSH into the server and run: claude login');
+        this.bus.emitError('agent', err);
+        return;
+      }
+      // Retry once for non-auth errors
       try {
         let result = await adapter.invoke(fullPrompt, session.sessionId, { model });
         result = await this._extractAndExecuteCommands(result, msg, session);
         this._reply(msg, result);
         this._addToHistory(msg.channel, msg.from, msg.text, result);
       } catch (retryErr) {
-        this._reply(msg, `Error: ${retryErr.message}`);
+        if (retryErr.isAuthError) {
+          this._reply(msg, '⚠️ Claude CLI session expired. Please SSH into the server and run: claude login');
+        } else {
+          this._reply(msg, `Error: ${retryErr.message}`);
+        }
         this.bus.emitError('agent', retryErr);
       }
     } finally {

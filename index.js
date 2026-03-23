@@ -10,7 +10,6 @@ import { ClaudeAdapter } from './cli-adapters/claude.js';
 import { TuiChannel } from './channels/tui.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -100,51 +99,6 @@ async function main() {
   bus.on('shutdown', shutdown);
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
-
-  // 11. Claude auth health monitor
-  if (daemonMode) {
-    const credPath = join(process.env.HOME || '/root', '.claude', '.credentials.json');
-    let lastWarnedExpired = false;
-
-    const checkAuth = () => {
-      try {
-        const creds = JSON.parse(readFileSync(credPath, 'utf-8'));
-        const expiresAt = creds?.claudeAiOauth?.expiresAt;
-        if (!expiresAt) return;
-
-        const now = Date.now();
-        const minsLeft = Math.round((expiresAt - now) / 60000);
-
-        if (expiresAt < now && !lastWarnedExpired) {
-          // Access token expired — check if refresh worked by rechecking after a delay
-          setTimeout(() => {
-            try {
-              const fresh = JSON.parse(readFileSync(credPath, 'utf-8'));
-              if (fresh.claudeAiOauth.expiresAt <= now) {
-                // Still expired — refresh token is dead
-                console.error('[Auth] Claude token expired and refresh failed! Login needed.');
-                bus.emit('message:outgoing', {
-                  id: 'auth-alert',
-                  channel: 'whatsapp',
-                  to: config.owner.phone ? `${config.owner.phone}@c.us` : null,
-                  text: '⚠️ Claude CLI auth expired and refresh failed. SSH in and run: claude login',
-                  timestamp: Date.now(),
-                  metadata: {}
-                });
-                lastWarnedExpired = true;
-              }
-            } catch {}
-          }, 60000); // Wait 1 min for auto-refresh
-        } else if (expiresAt > now) {
-          lastWarnedExpired = false;
-        }
-      } catch {}
-    };
-
-    // Check every 5 minutes
-    setInterval(checkAuth, 5 * 60 * 1000);
-    checkAuth();
-  }
 
   // Emit startup complete — channels handle displaying this
   if (!tuiOnly) {
