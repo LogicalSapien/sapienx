@@ -156,18 +156,17 @@ export class Agent {
       case '/remind': {
         if (!this.scheduler) { this._reply(msg, 'Scheduler not available.'); return true; }
         const reminderText = args.join(' ');
-        // Parse "in 30m" or "8am" or "every weekday 8am"
-        const inMatch = reminderText.match(/^in\s+(\d+)([mhd])\s+"?(.+?)"?$/i);
-        if (inMatch) {
-          const multipliers = { m: 60000, h: 3600000, d: 86400000 };
-          const delayMs = parseInt(inMatch[1]) * multipliers[inMatch[2]];
+        const delayMs = this._parseRemindTime(reminderText);
+        const msgMatch = reminderText.match(/"(.+?)"\s*$/);
+        const reminderMsg = msgMatch ? msgMatch[1] : null;
+        if (delayMs && reminderMsg) {
           const id = this.scheduler.addReminder({
-            message: inMatch[3], channel: msg.channel,
+            message: reminderMsg, channel: msg.channel,
             to: msg.metadata?.chatId || msg.from, delayMs
           });
-          this._reply(msg, `Reminder set (${id}): "${inMatch[3]}" in ${inMatch[1]}${inMatch[2]}`);
+          this._reply(msg, `Reminder set (${id}): "${reminderMsg}" in ${Math.round(delayMs / 60000)}m`);
         } else {
-          this._reply(msg, 'Usage: /remind in 30m "message" or /remind "0 8 * * *" "message"');
+          this._reply(msg, 'Usage: /remind in 30m "message" | /remind at 14:30 "message" | /remind tomorrow at 9:00 "message"');
         }
         return true;
       }
@@ -413,19 +412,26 @@ export class Agent {
       '- For WhatsApp: keep responses concise. Show key output, not full dumps.',
       '- For TUI: you can be more detailed.',
       '',
-      'BUILT-IN COMMANDS:',
+      'SCHEDULING & REMINDERS:',
       'You can execute SapienX commands by embedding them in your response using {{command}} syntax.',
-      'SapienX will extract and execute them automatically.',
+      'SapienX extracts and executes them automatically. You can embed MULTIPLE commands in one response.',
       '',
-      'Available commands:',
-      '- {{/remind in <N>m|h|d "message"}} — Set a reminder (e.g. {{/remind in 30m "check deploy"}})',
-      '- {{/cron "<cron-expr>" <command>}} — Schedule recurring task',
-      '- {{/task list}} — List scheduled tasks',
-      '- {{/task pause <id>}} / {{/task resume <id>}} / {{/task delete <id>}}',
+      'Time formats:',
+      '- {{/remind in 5m "message"}} — relative (m=minutes, h=hours, d=days)',
+      '- {{/remind at 14:30 "message"}} — specific time today (24h), or tomorrow if past',
+      '- {{/remind at 2:30pm "message"}} — with am/pm',
+      '- {{/remind tomorrow at 9:00 "message"}} — tomorrow at specific time',
+      '- {{/cron "0 9 * * 1-5" command}} — recurring cron schedule',
       '',
-      'When the user asks for a reminder or scheduled task, embed the command in your response.',
-      'Example: If user says "remind me in 2 mins to go out", respond with:',
-      'Done! I\'ve set a reminder for 2 minutes. {{/remind in 2m "go out"}}',
+      'IMPORTANT RULES:',
+      '- You CAN set multiple reminders in one response. Use separate {{}} for each.',
+      '- For chained reminders like "remind me in 5m to do X, then 10m later do Y":',
+      '  Set BOTH at once with correct offsets: {{/remind in 5m "X"}} {{/remind in 15m "Y"}}',
+      '- NEVER tell the user to set a reminder themselves. YOU set it using {{}} syntax.',
+      '- Always confirm what you\'ve scheduled in plain text.',
+      '',
+      'Example — user says "remind me in 5 mins to call Bob, and at 6pm to pick up groceries":',
+      'Done! Two reminders set: {{/remind in 5m "Call Bob"}} {{/remind at 18:00 "Pick up groceries"}}',
       '',
       'Available skills (fast-path, no AI needed):',
       skillList,
@@ -467,17 +473,20 @@ export class Agent {
     const argsStr = command.slice(cmd.length).trim();
 
     if (cmd === '/remind' && this.scheduler) {
-      const inMatch = argsStr.match(/^in\s+(\d+)([mhd])\s+"?(.+?)"?$/i);
-      if (inMatch) {
-        const multipliers = { m: 60000, h: 3600000, d: 86400000 };
-        const delayMs = parseInt(inMatch[1]) * multipliers[inMatch[2]];
-        const id = this.scheduler.addReminder({
-          message: inMatch[3],
-          channel: msg.channel,
-          to: msg.metadata?.chatId || msg.from,
-          delayMs
-        });
-        console.log(`[Agent] Reminder set (${id}): "${inMatch[3]}" in ${inMatch[1]}${inMatch[2]}`);
+      const delayMs = this._parseRemindTime(argsStr);
+      if (delayMs !== null) {
+        // Extract message — everything after the time part in quotes
+        const msgMatch = argsStr.match(/"(.+?)"\s*$/);
+        const message = msgMatch ? msgMatch[1] : argsStr.replace(/^.*?\d+[mhd]\s*/i, '').replace(/^"?|"?$/g, '').replace(/^at\s+\S+\s*/i, '').trim();
+        if (message) {
+          const id = this.scheduler.addReminder({
+            message,
+            channel: msg.channel,
+            to: msg.metadata?.chatId || msg.from,
+            delayMs
+          });
+          console.log(`[Agent] Reminder set (${id}): "${message}" in ${Math.round(delayMs / 60000)}m`);
+        }
       }
     } else if (cmd === '/cron' && this.scheduler) {
       const cronMatch = command.match(/^\/cron\s+"([^"]+)"\s+(.+)$/);
@@ -491,6 +500,50 @@ export class Agent {
         console.log(`[Agent] Cron set (${id}): "${cronMatch[1]}" → ${cronMatch[2]}`);
       }
     }
+  }
+
+  _parseRemindTime(argsStr) {
+    // Format: in <N>m|h|d "message"
+    const inMatch = argsStr.match(/^in\s+(\d+)([mhd])\b/i);
+    if (inMatch) {
+      const multipliers = { m: 60000, h: 3600000, d: 86400000 };
+      return parseInt(inMatch[1]) * multipliers[inMatch[2]];
+    }
+
+    // Format: at HH:MM "message" (24h or with am/pm)
+    const atMatch = argsStr.match(/^at\s+(\d{1,2}):(\d{2})\s*(am|pm)?\b/i);
+    if (atMatch) {
+      let hours = parseInt(atMatch[1]);
+      const mins = parseInt(atMatch[2]);
+      const ampm = atMatch[3]?.toLowerCase();
+      if (ampm === 'pm' && hours < 12) hours += 12;
+      if (ampm === 'am' && hours === 12) hours = 0;
+
+      const now = new Date();
+      const target = new Date(now);
+      target.setHours(hours, mins, 0, 0);
+      // If time already passed today, schedule for tomorrow
+      if (target <= now) target.setDate(target.getDate() + 1);
+      return target.getTime() - now.getTime();
+    }
+
+    // Format: tomorrow at HH:MM "message"
+    const tomorrowMatch = argsStr.match(/^tomorrow\s+(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?\b/i);
+    if (tomorrowMatch) {
+      let hours = parseInt(tomorrowMatch[1]);
+      const mins = parseInt(tomorrowMatch[2]);
+      const ampm = tomorrowMatch[3]?.toLowerCase();
+      if (ampm === 'pm' && hours < 12) hours += 12;
+      if (ampm === 'am' && hours === 12) hours = 0;
+
+      const now = new Date();
+      const target = new Date(now);
+      target.setDate(target.getDate() + 1);
+      target.setHours(hours, mins, 0, 0);
+      return target.getTime() - now.getTime();
+    }
+
+    return null;
   }
 
   _reply(msg, text) {
