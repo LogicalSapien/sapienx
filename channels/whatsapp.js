@@ -4,6 +4,7 @@ import qrcode from 'qrcode-terminal';
 import { BaseChannel } from './base.js';
 import { toWhatsApp } from './formatter.js';
 import paths from '../config/paths.js';
+import { Transcriber } from '../core/transcriber.js';
 
 export class WhatsAppChannel extends BaseChannel {
   constructor(bus, config) {
@@ -12,6 +13,7 @@ export class WhatsAppChannel extends BaseChannel {
     this.client = null;
     this.ready = false;
     this._sentIds = new Set();
+    this._transcriber = new Transcriber();
   }
 
   async start() {
@@ -123,11 +125,30 @@ export class WhatsAppChannel extends BaseChannel {
     // Detect self-chat
     const isSelfChat = !isGroup && chat.id._serialized === msg.from;
 
+    // Handle media (voice, images, documents)
+    let text = msg.body || '';
+    let mediaPath = null;
+    if (msg.hasMedia) {
+      try {
+        console.log(`[WhatsApp] Processing media: type=${msg.type}`);
+        const result = await this._transcriber.process(msg);
+        if (result) {
+          text = result.text;
+          mediaPath = result.filePath;
+        }
+      } catch (err) {
+        console.error(`[WhatsApp] Media processing failed: ${err.message}`);
+        text = text || `[${msg.type} message received — processing failed]`;
+      }
+    }
+
+    if (!text) return; // Skip empty messages
+
     this.bus.emit('message:incoming', {
       id: msg.id._serialized,
       channel: 'whatsapp',
       from: senderPhone,
-      text: msg.body,
+      text,
       timestamp: msg.timestamp * 1000,
       metadata: {
         isGroup,
@@ -135,6 +156,7 @@ export class WhatsAppChannel extends BaseChannel {
         groupId: isGroup ? msg.from : null,
         chatId: msg.from,
         senderId: senderId,
+        mediaPath,
         rawMsg: msg
       }
     });
