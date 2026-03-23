@@ -2,7 +2,15 @@
 
 Personal multi-agent AI assistant framework. Receive messages via WhatsApp or terminal, route to Claude Code CLI running as a full agent with unrestricted OS access.
 
-## Quick Start
+## One-Line Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/LogicalSapien/sapienx/main/scripts/setup.sh | bash
+```
+
+This installs Node.js, Claude CLI, pm2, clones the repo, and runs interactive setup.
+
+## Manual Install
 
 ```bash
 git clone https://github.com/LogicalSapien/sapienx.git
