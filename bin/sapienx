@@ -212,10 +212,10 @@ async function runConfigure() {
       }
     ]);
 
-    // Separate prompt for list type (renders better)
+    // Use rawlist (numbered) for better terminal compatibility
     const groupPolicyAnswer = await inquirer.prompt([
       {
-        type: 'list',
+        type: 'rawlist',
         name: 'groupPolicy',
         message: 'How should SapienX handle group messages?',
         choices: [
@@ -223,7 +223,7 @@ async function runConfigure() {
           { name: 'Only respond in allowed groups', value: 'allowlist' },
           { name: 'Respond in all groups', value: 'all' }
         ],
-        default: existing.GROUP_POLICY || 'ignore'
+        default: existing.GROUP_POLICY === 'allowlist' ? 1 : existing.GROUP_POLICY === 'all' ? 2 : 0
       }
     ]);
 
