@@ -10,15 +10,14 @@ export class ClaudeAdapter extends BaseAdapter {
   }
 
   buildArgs(prompt, sessionId, options = {}) {
-    // Generate a fresh UUID per invocation to avoid "session already in use" errors.
-    // Claude CLI locks sessions while running — each -p call needs its own ID.
     const cliSessionId = randomUUID();
     const args = [
       '-p', prompt,
       '--session-id', cliSessionId,
       '--output-format', this.config.outputFormat || 'stream-json',
       '--verbose',
-      '--max-turns', String(options.maxTurns || this.config.maxTurns || 5)
+      '--dangerously-skip-permissions',
+      '--max-turns', String(options.maxTurns || this.config.maxTurns || 10)
     ];
 
     const model = options.model || (this.config.autoModel ? null : this.config.model);
@@ -26,10 +25,9 @@ export class ClaudeAdapter extends BaseAdapter {
       args.push('--model', model);
     }
 
-    const tools = options.allowedTools || this.config.allowedTools;
-    if (tools && tools.length > 0) {
-      args.push('--allowedTools', tools.join(','));
-    }
+    // No --allowedTools restriction — give Claude full tool access
+    // With --dangerously-skip-permissions, Claude can use Bash, Read, Write,
+    // Edit, WebSearch, WebFetch, Glob, Grep, and everything else without asking
 
     return args;
   }
@@ -38,9 +36,7 @@ export class ClaudeAdapter extends BaseAdapter {
     try {
       const parsed = JSON.parse(line);
 
-      // Use only the result message — it contains the final complete text.
-      // Skip assistant messages to avoid duplicates (assistant + result both
-      // contain the same text).
+      // Use only the result message — contains the final complete text.
       if (parsed.type === 'result' && parsed.result) {
         return parsed.result;
       }
@@ -97,7 +93,8 @@ export class ClaudeAdapter extends BaseAdapter {
         reject(new Error(`Failed to spawn claude: ${err.message}`));
       });
 
-      const timeout = options.timeout || 120000;
+      // Longer timeout — agentic tasks can take time
+      const timeout = options.timeout || 300000; // 5 minutes
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;

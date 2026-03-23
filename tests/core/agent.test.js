@@ -95,10 +95,11 @@ describe('Agent', () => {
     expect(reply.text).toBe('AI response');
   });
 
-  test('skill trigger routes to skill handler', async () => {
-    const reply = await sendMessage('/vps echo hello');
-    // VPS handler runs the command directly
-    expect(reply.text).toContain('hello');
+  test('skill trigger routes to prompt skill', async () => {
+    // System skill is prompt-only — triggers CLI invocation with skill prompt
+    const reply = await sendMessage('check system status');
+    // mockAdapter.invoke is called because system skill injects prompt into CLI
+    expect(mockAdapter.invoke).toHaveBeenCalled();
   });
 
   test('resolves model from group config', async () => {

@@ -7,18 +7,26 @@ ownerOnly: false
 env: []
 ---
 
-You are reporting on SapienX system status. To get the current status, run:
+You are reporting on the system. Run these commands to gather info:
 
 ```bash
-sapienx status
+# System info
+uname -a
+uptime
+free -h 2>/dev/null || vm_stat 2>/dev/null
+df -h /
+
+# SapienX process
+ps aux | grep sapienx | grep -v grep
+
+# SapienX version
+cat package.json | grep version
+
+# Node
+node --version
+
+# Claude CLI
+claude --version 2>/dev/null
 ```
 
-Report the results clearly. Include:
-- Uptime
-- Active channels and their connection status
-- Active sessions
-- Pending scheduled tasks
-- System resource usage (memory, CPU)
-- Current SapienX version
-
-If the user asks about SapienX itself, explain that it's a personal AI assistant framework that routes messages from WhatsApp and terminal to AI CLI tools.
+Report the results clearly and concisely. If on WhatsApp, keep it brief.

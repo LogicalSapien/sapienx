@@ -37,11 +37,7 @@ export default {
       claude: {
         model: 'sonnet',
         autoModel: false,
-        allowedTools: [
-          'Bash', 'Read', 'Write', 'Edit',
-          'WebSearch', 'WebFetch', 'Glob', 'Grep'
-        ],
-        maxTurns: 5,
+        maxTurns: 10,
         outputFormat: 'stream-json'
       },
       codex: {

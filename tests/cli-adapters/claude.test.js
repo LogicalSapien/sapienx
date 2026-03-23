@@ -15,8 +15,7 @@ describe('ClaudeAdapter', () => {
     adapter = new ClaudeAdapter({
       model: 'sonnet',
       autoModel: false,
-      allowedTools: ['Bash', 'Read'],
-      maxTurns: 5,
+      maxTurns: 10,
       outputFormat: 'stream-json'
     });
   });
@@ -29,16 +28,21 @@ describe('ClaudeAdapter', () => {
     const args = adapter.buildArgs('hello', 'session-1', {});
     expect(args).toContain('-p');
     expect(args).toContain('--session-id');
-    // Session ID is a fresh UUID per invocation, not the passed-in value
     const sessionIdIndex = args.indexOf('--session-id') + 1;
     expect(args[sessionIdIndex]).toMatch(/^[0-9a-f-]{36}$/);
     expect(args).toContain('--output-format');
     expect(args).toContain('stream-json');
     expect(args).toContain('--verbose');
+    expect(args).toContain('--dangerously-skip-permissions');
     expect(args).toContain('--model');
     expect(args).toContain('sonnet');
     expect(args).toContain('--max-turns');
-    expect(args).toContain('5');
+    expect(args).toContain('10');
+  });
+
+  test('buildArgs does not include --allowedTools (full access)', () => {
+    const args = adapter.buildArgs('hello', 'session-1', {});
+    expect(args).not.toContain('--allowedTools');
   });
 
   test('buildArgs omits --model when autoModel is true', () => {
@@ -52,17 +56,8 @@ describe('ClaudeAdapter', () => {
     expect(args).toContain('opus');
   });
 
-  test('buildArgs includes allowedTools', () => {
-    const args = adapter.buildArgs('hello', 'session-1', {});
-    expect(args).toContain('--allowedTools');
-    expect(args).toContain('Bash,Read');
-  });
-
   test('parseStreamLine extracts result text', () => {
-    const line = JSON.stringify({
-      type: 'result',
-      result: 'Hello!'
-    });
+    const line = JSON.stringify({ type: 'result', result: 'Hello!' });
     const result = adapter.parseStreamLine(line);
     expect(result).toBe('Hello!');
   });
@@ -76,7 +71,7 @@ describe('ClaudeAdapter', () => {
     expect(result).toBeNull();
   });
 
-  test('parseStreamLine returns null for non-assistant types', () => {
+  test('parseStreamLine returns null for non-result types', () => {
     const line = JSON.stringify({ type: 'system', data: {} });
     const result = adapter.parseStreamLine(line);
     expect(result).toBeNull();

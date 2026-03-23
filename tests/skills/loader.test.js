@@ -15,16 +15,7 @@ describe('SkillLoader', () => {
 
   test('loadAll finds skills with SKILL.md', async () => {
     const skills = await loader.loadAll();
-    expect(skills.length).toBeGreaterThanOrEqual(2);
-  });
-
-  test('loads VPS skill as handler mode', async () => {
-    const skills = await loader.loadAll();
-    const vps = skills.find(s => s.name === 'vps');
-    expect(vps).toBeDefined();
-    expect(vps.mode).toBe('handler');
-    expect(vps.handler).toBeDefined();
-    expect(typeof vps.handler).toBe('function');
+    expect(skills.length).toBeGreaterThanOrEqual(1);
   });
 
   test('loads system skill as prompt mode', async () => {
@@ -36,18 +27,18 @@ describe('SkillLoader', () => {
     expect(sys.promptBody).toBeDefined();
   });
 
-  test('VPS skill has trigger keywords', async () => {
+  test('system skill has trigger keywords', async () => {
     const skills = await loader.loadAll();
-    const vps = skills.find(s => s.name === 'vps');
-    expect(vps.triggers).toContain('shell');
-    expect(vps.triggers).toContain('vps');
+    const sys = skills.find(s => s.name === 'system');
+    expect(sys.triggers).toContain('status');
+    expect(sys.triggers).toContain('uptime');
   });
 
-  test('matchSkill returns first matching skill', async () => {
+  test('matchSkill returns matching skill', async () => {
     await loader.loadAll();
-    const match = loader.matchSkill('run a shell command');
+    const match = loader.matchSkill('check system status');
     expect(match).toBeDefined();
-    expect(match.name).toBe('vps');
+    expect(match.name).toBe('system');
   });
 
   test('matchSkill returns null for no match', async () => {
