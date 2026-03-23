@@ -253,11 +253,49 @@ program
     }
 
     console.log('\n=== Configuration saved! ===\n');
-    console.log('Next steps:');
-    console.log('  sapienx tui      — interactive terminal chat');
-    console.log('  sapienx start    — start daemon (WhatsApp)');
-    console.log('  sapienx status   — check status');
-    console.log('');
+
+    // Stop any running daemon
+    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
+    if (existsSync(pidPath)) {
+      const pid = readFileSync(pidPath, 'utf-8').trim();
+      if (pid) {
+        try {
+          process.kill(parseInt(pid), 'SIGTERM');
+          console.log(`Stopped running daemon (PID: ${pid}).`);
+          writeFileSync(pidPath, '');
+        } catch {}
+      }
+    }
+
+    // Offer to start
+    const rl2 = createInterface({ input: process.stdin, output: process.stdout });
+    const startChoice = await new Promise(resolve =>
+      rl2.question('Start SapienX now? (tui/daemon/no) [tui]: ', resolve)
+    );
+    rl2.close();
+
+    const choice = startChoice.trim().toLowerCase() || 'tui';
+    if (choice === 'tui' || choice === 't') {
+      console.log('\nStarting TUI...\n');
+      const child = spawn('node', [join(projectRoot, 'index.js'), '--tui-only'], {
+        stdio: 'inherit',
+        cwd: projectRoot
+      });
+      child.on('exit', (code) => process.exit(code));
+    } else if (choice === 'daemon' || choice === 'd') {
+      console.log('\nStarting daemon (WhatsApp)...\n');
+      // Run in foreground so user can see QR code
+      const child = spawn('node', [join(projectRoot, 'index.js')], {
+        stdio: 'inherit',
+        cwd: projectRoot
+      });
+      child.on('exit', (code) => process.exit(code));
+    } else {
+      console.log('\nNot starting. You can run:');
+      console.log('  sapienx tui      — interactive terminal chat');
+      console.log('  sapienx start    — start daemon (WhatsApp)');
+      console.log('');
+    }
   });
 
 // sapienx status
