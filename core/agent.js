@@ -306,7 +306,7 @@ export class Agent {
       : `${systemPrompt}\n\nUser: ${msg.text}`;
 
     try {
-      const result = await adapter.invoke(fullPrompt, session.sessionId, {
+      let result = await adapter.invoke(fullPrompt, session.sessionId, {
         model,
         onChunk: (chunk) => {
           this.bus.emit('message:status', {
@@ -315,13 +315,15 @@ export class Agent {
           });
         }
       });
+      // Extract and execute any embedded commands like {{/remind in 2m "go out"}}
+      result = await this._extractAndExecuteCommands(result, msg, session);
       this._reply(msg, result);
-      // Store the exchange in history
       this._addToHistory(msg.channel, msg.from, msg.text, result);
     } catch (err) {
       // Retry once
       try {
-        const result = await adapter.invoke(fullPrompt, session.sessionId, { model });
+        let result = await adapter.invoke(fullPrompt, session.sessionId, { model });
+        result = await this._extractAndExecuteCommands(result, msg, session);
         this._reply(msg, result);
         this._addToHistory(msg.channel, msg.from, msg.text, result);
       } catch (retryErr) {
@@ -411,18 +413,19 @@ export class Agent {
       '- For WhatsApp: keep responses concise. Show key output, not full dumps.',
       '- For TUI: you can be more detailed.',
       '',
-      'BUILT-IN COMMANDS (these are handled by SapienX directly, not by you):',
-      'When the user wants any of these, tell them to send the command directly:',
-      '- /remind in <N>m|h|d "message" — Set a one-off reminder (e.g. /remind in 30m "check deploy")',
-      '- /cron "<cron-expr>" <command> — Schedule recurring task (e.g. /cron "0 9 * * *" /status)',
-      '- /task list | pause <id> | resume <id> | delete <id> — Manage scheduled tasks',
-      '- /new — Start a new conversation session',
-      '- /status — System status',
-      '- /help — Show all commands',
+      'BUILT-IN COMMANDS:',
+      'You can execute SapienX commands by embedding them in your response using {{command}} syntax.',
+      'SapienX will extract and execute them automatically.',
       '',
-      'IMPORTANT: You CANNOT set reminders or scheduled tasks yourself. If the user asks you to',
-      'set a reminder or schedule something, tell them to use the /remind or /cron command directly.',
-      'Example: "Send this: /remind in 2m \\"Your reminder text\\""',
+      'Available commands:',
+      '- {{/remind in <N>m|h|d "message"}} — Set a reminder (e.g. {{/remind in 30m "check deploy"}})',
+      '- {{/cron "<cron-expr>" <command>}} — Schedule recurring task',
+      '- {{/task list}} — List scheduled tasks',
+      '- {{/task pause <id>}} / {{/task resume <id>}} / {{/task delete <id>}}',
+      '',
+      'When the user asks for a reminder or scheduled task, embed the command in your response.',
+      'Example: If user says "remind me in 2 mins to go out", respond with:',
+      'Done! I\'ve set a reminder for 2 minutes. {{/remind in 2m "go out"}}',
       '',
       'Available skills (fast-path, no AI needed):',
       skillList,
@@ -433,6 +436,61 @@ export class Agent {
       this._referenceDoc ? 'Use this to answer any questions about SapienX usage, configuration, commands, architecture, or troubleshooting.' : '',
       this._referenceDoc || ''
     ].filter(Boolean).join('\n');
+  }
+
+  async _extractAndExecuteCommands(text, msg, session) {
+    const commandPattern = /\{\{(\/\w+[^}]*)\}\}/g;
+    let cleanText = text;
+    let match;
+
+    while ((match = commandPattern.exec(text)) !== null) {
+      const command = match[1].trim();
+      console.log(`[Agent] Executing embedded command: ${command}`);
+
+      try {
+        this._executeEmbeddedCommand(command, msg);
+      } catch (err) {
+        console.error(`[Agent] Embedded command failed: ${err.message}`);
+      }
+
+      // Remove the {{command}} from the response text
+      cleanText = cleanText.replace(match[0], '').trim();
+    }
+
+    // Clean up double spaces/newlines left by removal
+    return cleanText.replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  _executeEmbeddedCommand(command, msg) {
+    const parts = command.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const argsStr = command.slice(cmd.length).trim();
+
+    if (cmd === '/remind' && this.scheduler) {
+      const inMatch = argsStr.match(/^in\s+(\d+)([mhd])\s+"?(.+?)"?$/i);
+      if (inMatch) {
+        const multipliers = { m: 60000, h: 3600000, d: 86400000 };
+        const delayMs = parseInt(inMatch[1]) * multipliers[inMatch[2]];
+        const id = this.scheduler.addReminder({
+          message: inMatch[3],
+          channel: msg.channel,
+          to: msg.metadata?.chatId || msg.from,
+          delayMs
+        });
+        console.log(`[Agent] Reminder set (${id}): "${inMatch[3]}" in ${inMatch[1]}${inMatch[2]}`);
+      }
+    } else if (cmd === '/cron' && this.scheduler) {
+      const cronMatch = command.match(/^\/cron\s+"([^"]+)"\s+(.+)$/);
+      if (cronMatch) {
+        const id = this.scheduler.addCron({
+          schedule: cronMatch[1],
+          command: cronMatch[2],
+          channel: msg.channel,
+          to: msg.metadata?.chatId || msg.from
+        });
+        console.log(`[Agent] Cron set (${id}): "${cronMatch[1]}" → ${cronMatch[2]}`);
+      }
+    }
   }
 
   _reply(msg, text) {
