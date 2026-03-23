@@ -6,12 +6,15 @@ This document is the single source of truth for SapienX usage, configuration, ar
 
 SapienX is a personal AI assistant framework. It's a Node.js daemon that:
 - Receives messages from WhatsApp and a terminal TUI
-- Routes them to AI CLI tools (Claude Code CLI)
-- Has a built-in skill system for fast-path operations (shell commands, etc.)
+- Routes them to Claude Code CLI running as a **full agent** with unrestricted OS access
+- Claude can run bash commands, read/write files, browse the web, install packages, manage services
+- Has a built-in skill system for fast-path operations
 - Includes scheduling, reminders, and smart AI-driven tasks
 - Runs on macOS (development) and Ubuntu Linux VPS (production)
 
-SapienX is single-owner — only the configured owner can issue commands.
+SapienX is single-owner — only the configured owner (and allowed numbers) can issue commands.
+
+**Key capability:** Claude runs with `--dangerously-skip-permissions`, meaning it can execute any command on the system without approval. This makes it a true personal assistant — ask it to check disk space, fix a config, deploy code, and it actually does it.
 
 ## Installation
 
@@ -134,18 +137,17 @@ Cron expressions follow standard cron format: `minute hour day month weekday`
 | `/help` | Show all available commands |
 | `/quit` or `/exit` | Exit TUI (TUI only) |
 
-### VPS Skill Details
+### System Commands
 
-`/vps` runs shell commands directly on the host. Examples:
-- `/vps ls -la` — list files
-- `/vps df -h` — check disk space
-- `/vps ps aux | head 20` — running processes
-- `/vps systemctl status nginx` — check nginx
-- `/vps free -h` — memory usage
+Claude has full shell access — just ask naturally:
+- "check disk space" — Claude runs `df -h` and reports
+- "show running processes" — Claude runs `ps aux`
+- "restart nginx" — Claude runs `systemctl restart nginx`
+- "install htop" — Claude runs the appropriate package manager
+- "check my SSL cert" — Claude inspects and reports
+- "what's using port 3000?" — Claude runs `lsof -i :3000`
 
-**Safety:** Commands containing destructive keywords (`rm`, `kill`, `reboot`, `shutdown`, `drop`, `mkfs`, `dd`, `format`) require confirmation before execution. This is a speed bump against accidents, not a security boundary — the owner is the only user.
-
-Commands have a 30-second timeout and output is truncated at 10KB.
+No special `/vps` command needed — Claude understands natural language and executes commands directly with `--dangerously-skip-permissions`.
 
 ## Architecture
 
@@ -386,16 +388,58 @@ sapienx/
 
 ## Deployment to VPS
 
+### Quick Deploy
+
 ```bash
 # On your Ubuntu VPS:
+# 1. Install Node.js 18+ if not already installed
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# 2. Install Claude Code CLI
+npm install -g @anthropic-ai/claude-code
+
+# 3. Authenticate Claude (one-time)
+claude login
+
+# 4. Clone and setup SapienX
 git clone https://github.com/LogicalSapien/sapienx.git
 cd sapienx
-bash scripts/setup.sh        # Interactive setup
-npm install -g pm2            # Process manager
-sapienx start                 # Starts via pm2 on VPS
+npm install
+npm link                      # Makes 'sapienx' command available globally
 
-# Updating:
-sapienx upgrade               # or: bash scripts/upgrade.sh
+# 5. Configure (interactive — sets up .env, WhatsApp QR, etc.)
+sapienx configure
+
+# 6. Optional: Install pm2 for process management
+sudo npm install -g pm2
+```
+
+### After Deployment
+
+```bash
+sapienx start                 # Start daemon (background)
+sapienx status                # Check everything is running
+sapienx logs                  # View logs
+sapienx logs -f               # Follow logs live
+```
+
+### Updating
+
+```bash
+sapienx upgrade               # git pull + npm install + restart
+# or manually:
+git pull origin main
+npm install
+sapienx restart
+```
+
+### Keep Running After Reboot (with pm2)
+
+```bash
+pm2 start ecosystem.config.js
+pm2 save
+pm2 startup                   # Generates auto-start command
 ```
 
 ## Adding New Skills
