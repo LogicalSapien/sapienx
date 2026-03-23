@@ -10,6 +10,7 @@ export class WhatsAppChannel extends BaseChannel {
     this.name = 'whatsapp';
     this.client = null;
     this.ready = false;
+    this._sentIds = new Set();
   }
 
   async start() {
@@ -38,32 +39,31 @@ export class WhatsAppChannel extends BaseChannel {
       this.bus.emitError('whatsapp', new Error(`Disconnected: ${reason}`));
     });
 
-    // Use message_create to catch ALL incoming messages (including self-chat).
-    // The 'message' event doesn't fire for messages you send to yourself.
-    this._processedIds = new Set();
-
+    // message_create fires for ALL messages — both incoming and outgoing.
+    // We skip: status broadcasts, and messages WE sent as responses.
+    // We process everything else — including self-chat, group msgs, etc.
     this.client.on('message_create', async (msg) => {
-      // Skip status updates
+      // Skip status broadcasts
       if (msg.isStatus) return;
 
-      // For self-chat (messaging yourself): fromMe is always true,
-      // so we process those. For other chats: skip our own outgoing messages.
-      const isSelfChat = msg.from === msg.to;
-      if (msg.fromMe && !isSelfChat) return;
+      // Skip messages that SapienX sent as responses (tracked by ID)
+      if (this._sentIds.has(msg.id._serialized)) return;
 
-      // In self-chat, skip messages that SapienX sent as responses.
-      // We track IDs of messages we send to avoid processing our own replies.
-      if (msg.fromMe && isSelfChat && this._sentIds?.has(msg.id._serialized)) return;
-      // Deduplicate
-      const msgId = msg.id._serialized;
-      if (this._processedIds.has(msgId)) return;
-      this._processedIds.add(msgId);
-      // Keep set from growing forever
-      if (this._processedIds.size > 1000) {
-        const arr = [...this._processedIds];
-        this._processedIds = new Set(arr.slice(-500));
+      // Skip our own outgoing messages UNLESS it's to our own number (self-chat)
+      // In self-chat, msg.fromMe is true for messages you type on your phone too
+      if (msg.fromMe) {
+        // Check if this is a self-chat by looking at the chat
+        const chat = await msg.getChat();
+        if (!chat.isGroup && chat.id._serialized === msg.from) {
+          // This IS self-chat — process it
+          console.log(`[WhatsApp] Self-chat message: "${msg.body?.substring(0, 50)}"`);
+        } else {
+          // Regular outgoing message to someone else — skip
+          return;
+        }
       }
-      console.log(`[WhatsApp] Message from ${msg.from}: ${msg.body.substring(0, 50)}`);
+
+      console.log(`[WhatsApp] Message from ${msg.from}: "${msg.body?.substring(0, 50)}"`);
       await this._handleIncoming(msg);
     });
 
@@ -121,14 +121,17 @@ export class WhatsAppChannel extends BaseChannel {
 
     const chatId = to.includes('@') ? to : `${to}@c.us`;
     const formatted = toWhatsApp(message.text);
-    const sent = await this.client.sendMessage(chatId, formatted);
-    // Track sent message IDs so we don't process our own replies in self-chat
-    if (!this._sentIds) this._sentIds = new Set();
-    if (sent?.id?._serialized) this._sentIds.add(sent.id._serialized);
-    // Prevent set from growing forever
-    if (this._sentIds.size > 500) {
-      const arr = [...this._sentIds];
-      this._sentIds = new Set(arr.slice(-250));
+    try {
+      const sent = await this.client.sendMessage(chatId, formatted);
+      // Track sent IDs so we don't process our own responses
+      if (sent?.id?._serialized) this._sentIds.add(sent.id._serialized);
+      if (this._sentIds.size > 500) {
+        const arr = [...this._sentIds];
+        this._sentIds = new Set(arr.slice(-250));
+      }
+      console.log(`[WhatsApp] Sent reply to ${chatId}`);
+    } catch (err) {
+      console.error(`[WhatsApp] Failed to send: ${err.message}`);
     }
   }
 

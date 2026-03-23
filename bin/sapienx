@@ -206,16 +206,62 @@ program
     // 3. WhatsApp
     console.log('\n3. WhatsApp\n');
     const waAuthPath = join(projectRoot, '.wwebjs_auth');
+    let needsWhatsAppLink = false;
     if (existsSync(waAuthPath)) {
       console.log('  WhatsApp session: saved (will auto-connect)');
       const resetWa = await ask('  Reset WhatsApp session? (y/N): ');
       if (resetWa.toLowerCase() === 'y') {
         const { rmSync } = await import('node:fs');
         rmSync(waAuthPath, { recursive: true });
-        console.log('  WhatsApp session cleared. Will show QR on next start.');
+        needsWhatsAppLink = true;
+        const linkNow = await ask('  Link WhatsApp now? (Y/n): ');
+        if (linkNow.toLowerCase() !== 'n') {
+          console.log('\n  Starting WhatsApp... scan the QR code with your phone.');
+          console.log('  (WhatsApp > Settings > Linked Devices > Link a Device)\n');
+          rl.close();
+          // Write .env first so config is available
+          const envContent = [
+            '# SapienX Configuration',
+            `OWNER_PHONE=${phone}`,
+            `OWNER_NAME=${name}`,
+            `ANTHROPIC_API_KEY=${apiKey || ''}`,
+            `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
+            ''
+          ].join('\n');
+          writeFileSync(envPath, envContent);
+          // Start in foreground with WhatsApp — shows QR and waits
+          const child = spawn('node', [join(projectRoot, 'index.js')], {
+            stdio: 'inherit',
+            cwd: projectRoot
+          });
+          child.on('exit', (code) => process.exit(code));
+          return; // configure exits here — daemon takes over
+        }
       }
     } else {
-      console.log('  WhatsApp: not configured yet. QR code will show on first start.');
+      console.log('  WhatsApp: not configured yet.');
+      const linkNow = await ask('  Link WhatsApp now? (Y/n): ');
+      if (linkNow.toLowerCase() !== 'n') {
+        console.log('\n  Starting WhatsApp... scan the QR code with your phone.');
+        console.log('  (WhatsApp > Settings > Linked Devices > Link a Device)\n');
+        rl.close();
+        const envContent = [
+          '# SapienX Configuration',
+          `OWNER_PHONE=${phone}`,
+          `OWNER_NAME=${name}`,
+          `ANTHROPIC_API_KEY=${apiKey || ''}`,
+          `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
+          ''
+        ].join('\n');
+        writeFileSync(envPath, envContent);
+        const child = spawn('node', [join(projectRoot, 'index.js')], {
+          stdio: 'inherit',
+          cwd: projectRoot
+        });
+        child.on('exit', (code) => process.exit(code));
+        return;
+      }
+      needsWhatsAppLink = true;
     }
 
     // 4. Claude CLI
