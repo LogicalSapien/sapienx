@@ -426,7 +426,10 @@ export class Agent {
       'IMPORTANT RULES:',
       '- You CAN set multiple reminders in one response. Use separate {{}} for each.',
       '- For chained reminders like "remind me in 5m to do X, then 10m later do Y":',
-      '  Set BOTH at once with correct offsets: {{/remind in 5m "X"}} {{/remind in 15m "Y"}}',
+      '  PREFERRED: Set both at once with offsets: {{/remind in 5m "X"}} {{/remind in 15m "Y"}}',
+      '  ALSO WORKS: Embed a command inside a reminder to chain them:',
+      '  {{/remind in 5m "Time to do X {{/remind in 10m \\"Now do Y\\"}}"}}',
+      '  When the 5m reminder fires, it auto-executes the embedded /remind for 10m.',
       '- NEVER tell the user to set a reminder themselves. YOU set it using {{}} syntax.',
       '- Always confirm what you\'ve scheduled in plain text.',
       '',
@@ -558,11 +561,32 @@ export class Agent {
   }
 
   async _handleReminder(data) {
+    let text = `Reminder: ${data.message}`;
+
+    // Check for embedded {{commands}} in the reminder message and execute them
+    const commandPattern = /\{\{(\/\w+[^}]*)\}\}/g;
+    let match;
+    while ((match = commandPattern.exec(data.message)) !== null) {
+      const command = match[1].trim();
+      console.log(`[Agent] Reminder chaining — executing: ${command}`);
+      try {
+        this._executeEmbeddedCommand(command, {
+          channel: data.channel,
+          from: data.to,
+          metadata: { chatId: data.to }
+        });
+      } catch (err) {
+        console.error(`[Agent] Chained command failed: ${err.message}`);
+      }
+      // Remove {{command}} from display text
+      text = text.replace(match[0], '').trim();
+    }
+
     this.bus.emit('message:outgoing', {
       id: uuidv4(),
       channel: data.channel,
       to: data.to,
-      text: `Reminder: ${data.message}`,
+      text,
       timestamp: Date.now(),
       metadata: {}
     });
