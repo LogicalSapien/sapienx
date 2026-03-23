@@ -15,50 +15,8 @@ async function ensureSetup() {
   const envPath = join(projectRoot, '.env');
   if (existsSync(envPath)) return; // already configured
 
-  console.log('\n=== SapienX First-Run Setup ===\n');
-  console.log('No .env file found. Let\'s configure SapienX.\n');
-  console.log('(You can re-run this anytime with: sapienx configure)\n');
-
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q) => new Promise(resolve => rl.question(q, resolve));
-
-  const name = await ask('Your name: ');
-  const phone = await ask('Your WhatsApp phone (with country code, no +): ');
-  const apiKey = await ask('Anthropic API key (blank to skip, use claude login instead): ');
-
-  rl.close();
-
-  // Build .env content
-  const examplePath = join(projectRoot, '.env.example');
-  let envContent = existsSync(examplePath)
-    ? readFileSync(examplePath, 'utf-8')
-    : 'OWNER_PHONE=\nOWNER_NAME=\nANTHROPIC_API_KEY=\nTELEGRAM_BOT_TOKEN=\n';
-
-  envContent = envContent.replace(/^OWNER_PHONE=.*/m, `OWNER_PHONE=${phone}`);
-  envContent = envContent.replace(/^OWNER_NAME=.*/m, `OWNER_NAME=${name}`);
-  if (apiKey) {
-    envContent = envContent.replace(/^ANTHROPIC_API_KEY=.*/m, `ANTHROPIC_API_KEY=${apiKey}`);
-  }
-
-  writeFileSync(envPath, envContent);
-  console.log('\n.env created.');
-
-  // Copy schedules if needed
-  const schedulesPath = join(projectRoot, 'data', 'schedules.json');
-  const schedulesExample = join(projectRoot, 'data', 'schedules.example.json');
-  if (!existsSync(schedulesPath) && existsSync(schedulesExample)) {
-    copyFileSync(schedulesExample, schedulesPath);
-  }
-
-  // Check Claude CLI
-  try {
-    execSync('claude --version', { stdio: 'ignore' });
-    console.log('Claude CLI: found.');
-  } catch {
-    console.log('Claude CLI not found. Install with: npm install -g @anthropic-ai/claude-code');
-  }
-
-  console.log('\nSetup complete!\n');
+  console.log('\nNo .env file found. Running first-time setup...\n');
+  await runConfigure();
 }
 
 const program = new Command();
@@ -186,253 +144,264 @@ program
   });
 
 // sapienx configure
+async function runConfigure() {
+  const inquirer = (await import('inquirer')).default;
+
+  console.log('\n=== SapienX Configuration ===\n');
+
+  const envPath = join(projectRoot, '.env');
+
+  // Load existing values
+  let existing = {};
+  if (existsSync(envPath)) {
+    const content = readFileSync(envPath, 'utf-8');
+    for (const line of content.split('\n')) {
+      const match = line.match(/^([A-Z_]+)=(.*)$/);
+      if (match) existing[match[1]] = match[2];
+    }
+  }
+
+  // 1. Owner Settings
+  const ownerAnswers = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'name',
+      message: 'Your name:',
+      default: existing.OWNER_NAME || ''
+    }
+  ]);
+
+  // 2. Channels
+  const channelAnswer = await inquirer.prompt([
+    {
+      type: 'checkbox',
+      name: 'channels',
+      message: 'Which channels do you want to enable?',
+      choices: [
+        { name: 'WhatsApp', value: 'whatsapp', checked: (existing.CHANNELS || 'whatsapp,tui').includes('whatsapp') },
+        { name: 'TUI (Terminal)', value: 'tui', checked: (existing.CHANNELS || 'whatsapp,tui').includes('tui') },
+        { name: 'Telegram (coming soon)', value: 'telegram', disabled: 'V2' }
+      ]
+    }
+  ]);
+
+  const channels = channelAnswer.channels;
+  let phone = existing.OWNER_PHONE || '';
+  let allowedNumbers = existing.ALLOWED_NUMBERS || '';
+  let groupPolicy = existing.GROUP_POLICY || 'ignore';
+  let allowedGroups = existing.ALLOWED_GROUPS || '';
+
+  // 3. WhatsApp settings (only if WhatsApp selected)
+  if (channels.includes('whatsapp')) {
+    console.log('\n--- WhatsApp Settings ---\n');
+
+    const waAnswers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'phone',
+        message: 'Your WhatsApp phone number (country code, no +):',
+        default: (existing.OWNER_PHONE || '').replace(/^\+/, ''),
+        validate: (v) => v.match(/^\d{7,15}$/) ? true : 'Enter digits only (7-15 digits)'
+      },
+      {
+        type: 'input',
+        name: 'allowedNumbers',
+        message: 'Additional allowed numbers (comma-separated, blank for owner only):',
+        default: existing.ALLOWED_NUMBERS || '',
+        filter: (v) => v.replace(/\+/g, '').replace(/\s/g, '')
+      },
+      {
+        type: 'list',
+        name: 'groupPolicy',
+        message: 'How should SapienX handle group messages?',
+        choices: [
+          { name: 'Ignore all groups (default)', value: 'ignore' },
+          { name: 'Only respond in allowed groups', value: 'allowlist' },
+          { name: 'Respond in all groups', value: 'all' }
+        ],
+        default: existing.GROUP_POLICY || 'ignore'
+      }
+    ]);
+
+    phone = waAnswers.phone;
+    allowedNumbers = waAnswers.allowedNumbers;
+    groupPolicy = waAnswers.groupPolicy;
+
+    if (groupPolicy === 'allowlist') {
+      const groupAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'allowedGroups',
+          message: 'Allowed group IDs (comma-separated, use "sapienx groups" to find IDs):',
+          default: existing.ALLOWED_GROUPS || ''
+        }
+      ]);
+      allowedGroups = groupAnswer.allowedGroups;
+    }
+
+    // WhatsApp session management
+    const waAuthPath = join(projectRoot, '.wwebjs_auth');
+    if (existsSync(waAuthPath)) {
+      const waSessionAnswer = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'reset',
+          message: 'WhatsApp session exists. Reset and re-scan QR?',
+          default: false
+        }
+      ]);
+      if (waSessionAnswer.reset) {
+        const { rmSync } = await import('node:fs');
+        rmSync(waAuthPath, { recursive: true });
+        console.log('  WhatsApp session cleared.');
+      }
+    } else {
+      console.log('  WhatsApp: no session yet. QR code will show on start.');
+    }
+  }
+
+  // 4. API Keys
+  console.log('\n--- API Keys ---\n');
+  const apiAnswers = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'apiKey',
+      message: 'Anthropic API key (blank to skip):',
+      default: existing.ANTHROPIC_API_KEY || ''
+    },
+    {
+      type: 'input',
+      name: 'telegramToken',
+      message: 'Telegram bot token (blank to skip):',
+      default: existing.TELEGRAM_BOT_TOKEN || ''
+    }
+  ]);
+
+  // 5. Claude CLI check
+  console.log('\n--- Claude CLI ---\n');
+  try {
+    const ver = execSync('claude --version', { encoding: 'utf-8' }).trim();
+    console.log(`  Claude CLI: ${ver}`);
+  } catch {
+    console.log('  Claude CLI: not installed');
+    const installAnswer = await inquirer.prompt([
+      { type: 'confirm', name: 'install', message: 'Install Claude CLI now?', default: false }
+    ]);
+    if (installAnswer.install) {
+      execSync('npm install -g @anthropic-ai/claude-code', { stdio: 'inherit' });
+    }
+  }
+
+  // Write .env
+  const envContent = [
+    '# SapienX Configuration',
+    `OWNER_PHONE=${phone}`,
+    `OWNER_NAME=${ownerAnswers.name}`,
+    `CHANNELS=${channels.join(',')}`,
+    `ALLOWED_NUMBERS=${allowedNumbers}`,
+    `GROUP_POLICY=${groupPolicy}`,
+    `ALLOWED_GROUPS=${allowedGroups}`,
+    `ANTHROPIC_API_KEY=${apiAnswers.apiKey || ''}`,
+    `TELEGRAM_BOT_TOKEN=${apiAnswers.telegramToken || ''}`,
+    ''
+  ].join('\n');
+  writeFileSync(envPath, envContent);
+
+  // Ensure data dirs
+  const schedulesPath = join(projectRoot, 'data', 'schedules.json');
+  const schedulesExample = join(projectRoot, 'data', 'schedules.example.json');
+  if (!existsSync(schedulesPath) && existsSync(schedulesExample)) {
+    copyFileSync(schedulesExample, schedulesPath);
+  }
+
+  console.log('\n=== Configuration saved! ===\n');
+
+  // Stop any running daemon
+  const pidPath = join(projectRoot, 'data', 'sapienx.pid');
+  if (existsSync(pidPath)) {
+    const pid = readFileSync(pidPath, 'utf-8').trim();
+    if (pid) {
+      try {
+        process.kill(parseInt(pid), 'SIGTERM');
+        console.log(`Stopped running daemon (PID: ${pid}).`);
+        writeFileSync(pidPath, '');
+      } catch {}
+    }
+  }
+
+  // Start SapienX
+  const waAuthExists = existsSync(join(projectRoot, '.wwebjs_auth'));
+  const needsQr = channels.includes('whatsapp') && !waAuthExists;
+
+  const startAnswer = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'startMode',
+      message: 'Start SapienX now?',
+      choices: [
+        ...(needsQr ? [
+          { name: 'Yes — foreground (needed for QR scan)', value: 'foreground' }
+        ] : [
+          { name: 'Yes — background daemon', value: 'daemon' }
+        ]),
+        { name: 'Yes — TUI only', value: 'tui' },
+        { name: 'No', value: 'no' }
+      ]
+    }
+  ]);
+
+  if (startAnswer.startMode === 'daemon') {
+    console.log('\nStarting SapienX daemon...');
+    const logPath = join(projectRoot, 'data', 'sapienx.log');
+    writeFileSync(logPath, '');
+    const fs = await import('node:fs');
+    const logFd = fs.openSync(logPath, 'a');
+    const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
+      stdio: ['ignore', logFd, logFd],
+      cwd: projectRoot,
+      detached: true
+    });
+    child.unref();
+    writeFileSync(join(projectRoot, 'data', 'sapienx.pid'), String(child.pid));
+
+    process.stdout.write('Waiting for WhatsApp');
+    let connected = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const log = readFileSync(logPath, 'utf-8');
+        if (log.includes('[WhatsApp] Connected and ready.')) { connected = true; break; }
+      } catch {}
+      if (i % 3 === 2) process.stdout.write('.');
+    }
+    console.log(connected ? ' connected!' : ' timeout (check: sapienx logs)');
+    console.log(`\nSapienX running in background (PID: ${child.pid}).`);
+    console.log('Commands: sapienx status | sapienx logs | sapienx stop\n');
+  } else if (startAnswer.startMode === 'foreground') {
+    console.log('\nStarting SapienX (scan QR when it appears)...\n');
+    const child = spawn('node', [join(projectRoot, 'index.js')], {
+      stdio: 'inherit', cwd: projectRoot
+    });
+    child.on('exit', (code) => process.exit(code));
+  } else if (startAnswer.startMode === 'tui') {
+    console.log('\nStarting TUI...\n');
+    const child = spawn('node', [join(projectRoot, 'index.js'), '--tui-only'], {
+      stdio: 'inherit', cwd: projectRoot
+    });
+    child.on('exit', (code) => process.exit(code));
+  } else {
+    console.log('\nRun: sapienx start | sapienx tui\n');
+  }
+}
+
 program
   .command('configure')
   .alias('setup')
   .description('Configure SapienX settings (onboarding & reconfiguration)')
   .action(async () => {
-    console.log('\n=== SapienX Configuration ===\n');
-
-    const envPath = join(projectRoot, '.env');
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const ask = (q) => new Promise(resolve => rl.question(q, resolve));
-
-    // Load existing values if any
-    let existing = {};
-    if (existsSync(envPath)) {
-      const content = readFileSync(envPath, 'utf-8');
-      for (const line of content.split('\n')) {
-        const match = line.match(/^([A-Z_]+)=(.*)$/);
-        if (match) existing[match[1]] = match[2];
-      }
-    }
-
-    const askWithDefault = async (prompt, key) => {
-      const current = existing[key];
-      if (current) {
-        const answer = await ask(`${prompt} [${current}]: `);
-        return answer.trim() || current;
-      }
-      return (await ask(`${prompt}: `)).trim();
-    };
-
-    // 1. Owner info
-    console.log('1. Owner Settings\n');
-    const name = await askWithDefault('  Your name', 'OWNER_NAME');
-    let phone = await askWithDefault('  WhatsApp phone (country code, no +)', 'OWNER_PHONE');
-    phone = phone.replace(/^\+/, '').replace(/\s/g, ''); // strip + and spaces
-
-    // 2. Allowed numbers (who can message SapienX)
-    console.log('\n2. Allowed Numbers\n');
-    console.log('  These numbers can send messages to SapienX via WhatsApp.');
-    console.log('  Your owner number is always allowed. Add others (e.g., family, work phone).');
-    let allowedNumbers = await askWithDefault('  Allowed numbers (comma-separated, blank for owner only)', 'ALLOWED_NUMBERS');
-    allowedNumbers = allowedNumbers.replace(/\s/g, '').replace(/\+/g, ''); // clean up
-
-    // 3. Group policy
-    console.log('\n3. Group Policy\n');
-    console.log('  How should SapienX handle WhatsApp group messages?');
-    console.log('  a) ignore  — ignore all group messages (default)');
-    console.log('  b) allowlist — only respond in groups you specify');
-    console.log('  c) all     — respond in all groups SapienX is added to');
-    let groupPolicy = await askWithDefault('  Group policy (ignore/allowlist/all)', 'GROUP_POLICY');
-    groupPolicy = groupPolicy.toLowerCase() || 'ignore';
-
-    let allowedGroups = '';
-    if (groupPolicy === 'allowlist') {
-      console.log('\n  Enter group IDs (comma-separated). Use "sapienx groups" to find IDs.');
-      allowedGroups = await askWithDefault('  Allowed group IDs', 'ALLOWED_GROUPS');
-    }
-
-    // 4. API keys
-    console.log('\n4. API Keys\n');
-    const apiKey = await askWithDefault('  Anthropic API key (blank to skip)', 'ANTHROPIC_API_KEY');
-    const telegramToken = await askWithDefault('  Telegram bot token (blank to skip)', 'TELEGRAM_BOT_TOKEN');
-
-    // 5. WhatsApp
-    console.log('\n3. WhatsApp\n');
-    const waAuthPath = join(projectRoot, '.wwebjs_auth');
-    let needsWhatsAppLink = false;
-    if (existsSync(waAuthPath)) {
-      console.log('  WhatsApp session: saved (will auto-connect)');
-      const resetWa = await ask('  Reset WhatsApp session? (y/N): ');
-      if (resetWa.toLowerCase() === 'y') {
-        const { rmSync } = await import('node:fs');
-        rmSync(waAuthPath, { recursive: true });
-        needsWhatsAppLink = true;
-        const linkNow = await ask('  Link WhatsApp now? (Y/n): ');
-        if (linkNow.toLowerCase() !== 'n') {
-          console.log('\n  Starting WhatsApp... scan the QR code with your phone.');
-          console.log('  (WhatsApp > Settings > Linked Devices > Link a Device)\n');
-          rl.close();
-          // Write .env first so config is available
-          const envContent = buildEnv();
-          writeFileSync(envPath, envContent);
-          // Start in foreground with WhatsApp — shows QR and waits
-          const child = spawn('node', [join(projectRoot, 'index.js')], {
-            stdio: 'inherit',
-            cwd: projectRoot
-          });
-          child.on('exit', (code) => process.exit(code));
-          return; // configure exits here — daemon takes over
-        }
-      }
-    } else {
-      console.log('  WhatsApp: not configured yet.');
-      const linkNow = await ask('  Link WhatsApp now? (Y/n): ');
-      if (linkNow.toLowerCase() !== 'n') {
-        console.log('\n  Starting WhatsApp... scan the QR code with your phone.');
-        console.log('  (WhatsApp > Settings > Linked Devices > Link a Device)\n');
-        rl.close();
-        const envContent = [
-          '# SapienX Configuration',
-          `OWNER_PHONE=${phone}`,
-          `OWNER_NAME=${name}`,
-          `ANTHROPIC_API_KEY=${apiKey || ''}`,
-          `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
-          ''
-        ].join('\n');
-        writeFileSync(envPath, envContent);
-        const child = spawn('node', [join(projectRoot, 'index.js')], {
-          stdio: 'inherit',
-          cwd: projectRoot
-        });
-        child.on('exit', (code) => process.exit(code));
-        return;
-      }
-      needsWhatsAppLink = true;
-    }
-
-    // Helper to build .env content
-    const buildEnv = () => [
-      '# SapienX Configuration',
-      `OWNER_PHONE=${phone}`,
-      `OWNER_NAME=${name}`,
-      `ALLOWED_NUMBERS=${allowedNumbers || ''}`,
-      `GROUP_POLICY=${groupPolicy || 'ignore'}`,
-      `ALLOWED_GROUPS=${allowedGroups || ''}`,
-      `ANTHROPIC_API_KEY=${apiKey || ''}`,
-      `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
-      ''
-    ].join('\n');
-
-    // 6. Claude CLI
-    console.log('\n6. Claude CLI\n');
-    try {
-      const ver = execSync('claude --version', { encoding: 'utf-8' }).trim();
-      console.log(`  Claude CLI: ${ver}`);
-    } catch {
-      console.log('  Claude CLI: not installed');
-      const installClaude = await ask('  Install Claude CLI now? (y/N): ');
-      if (installClaude.toLowerCase() === 'y') {
-        console.log('  Installing...');
-        execSync('npm install -g @anthropic-ai/claude-code', { stdio: 'inherit' });
-      }
-    }
-
-    rl.close();
-
-    // Write .env
-    writeFileSync(envPath, buildEnv());
-
-    // Ensure data dirs
-    const schedulesPath = join(projectRoot, 'data', 'schedules.json');
-    const schedulesExample = join(projectRoot, 'data', 'schedules.example.json');
-    if (!existsSync(schedulesPath) && existsSync(schedulesExample)) {
-      copyFileSync(schedulesExample, schedulesPath);
-    }
-
-    console.log('\n=== Configuration saved! ===\n');
-
-    // Stop any running daemon
-    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
-    if (existsSync(pidPath)) {
-      const pid = readFileSync(pidPath, 'utf-8').trim();
-      if (pid) {
-        try {
-          process.kill(parseInt(pid), 'SIGTERM');
-          console.log(`Stopped running daemon (PID: ${pid}).`);
-          writeFileSync(pidPath, '');
-        } catch {}
-      }
-    }
-
-    // Check if WhatsApp needs QR scan
-    const waAuthExists = existsSync(join(projectRoot, '.wwebjs_auth'));
-
-    const rl2 = createInterface({ input: process.stdin, output: process.stdout });
-    const startChoice = await new Promise(resolve => {
-      if (!waAuthExists) {
-        // No WhatsApp session — need foreground for QR scan
-        rl2.question('Start SapienX now? (yes/no) [yes]: ', resolve);
-      } else {
-        // WhatsApp session exists — can start in background
-        rl2.question('Start SapienX in background? (yes/no) [yes]: ', resolve);
-      }
-    });
-    rl2.close();
-
-    const choice = (startChoice.trim().toLowerCase() || 'yes');
-    if (choice === 'yes' || choice === 'y') {
-      if (!waAuthExists) {
-        // Need foreground for QR scan
-        console.log('\nStarting SapienX (foreground for QR scan)...');
-        console.log('Scan the QR code, then press Ctrl+C and run: sapienx start\n');
-        const child = spawn('node', [join(projectRoot, 'index.js')], {
-          stdio: 'inherit',
-          cwd: projectRoot
-        });
-        child.on('exit', (code) => process.exit(code));
-      } else {
-        // Start as background daemon
-        console.log('\nStarting SapienX daemon...');
-        const logPath = join(projectRoot, 'data', 'sapienx.log');
-        writeFileSync(logPath, '');
-        const fs = await import('node:fs');
-        const logFd = fs.openSync(logPath, 'a');
-        const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
-          stdio: ['ignore', logFd, logFd],
-          cwd: projectRoot,
-          detached: true
-        });
-        child.unref();
-        writeFileSync(join(projectRoot, 'data', 'sapienx.pid'), String(child.pid));
-
-        // Wait for WhatsApp connection
-        process.stdout.write(`Waiting for WhatsApp`);
-        let connected = false;
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 1000));
-          try {
-            const log = readFileSync(logPath, 'utf-8');
-            if (log.includes('[WhatsApp] Connected and ready.')) {
-              connected = true;
-              break;
-            }
-          } catch {}
-          if (i % 3 === 2) process.stdout.write('.');
-        }
-
-        if (connected) {
-          console.log(' connected!');
-          console.log(`\nSapienX is running in background (PID: ${child.pid}).`);
-          console.log('WhatsApp is connected and ready to receive messages.');
-        } else {
-          console.log(' timeout.');
-          console.log(`\nDaemon started (PID: ${child.pid}) but WhatsApp may still be connecting.`);
-        }
-        console.log('\nCommands:');
-        console.log('  sapienx status   — check status');
-        console.log('  sapienx logs     — view logs');
-        console.log('  sapienx tui      — interactive chat');
-        console.log('  sapienx stop     — stop daemon');
-        console.log('');
-      }
-    } else {
-      console.log('\nNot starting. Run: sapienx start');
-      console.log('');
-    }
+    await runConfigure();
   });
+
 
 // sapienx status
 program
