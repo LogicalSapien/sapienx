@@ -16,7 +16,8 @@ async function ensureSetup() {
   if (existsSync(envPath)) return; // already configured
 
   console.log('\n=== SapienX First-Run Setup ===\n');
-  console.log('No .env file found. Let me set things up.\n');
+  console.log('No .env file found. Let\'s configure SapienX.\n');
+  console.log('(You can re-run this anytime with: sapienx configure)\n');
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise(resolve => rl.question(q, resolve));
@@ -80,14 +81,21 @@ program
       });
     } catch {
       console.log('pm2 not found. Starting directly...');
+      const logPath = join(projectRoot, 'data', 'sapienx.log');
+      const logFd = (await import('node:fs')).openSync(logPath, 'a');
       const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
-        stdio: 'ignore',
+        stdio: ['ignore', logFd, logFd],
         cwd: projectRoot,
         detached: true
       });
       child.unref();
-      console.log(`SapienX daemon started (PID: ${child.pid}). WhatsApp only, no TUI.`);
+      // Save PID for stop command
+      writeFileSync(join(projectRoot, 'data', 'sapienx.pid'), String(child.pid));
+      console.log(`SapienX daemon started (PID: ${child.pid}).`);
+      console.log(`Logs: ${logPath}`);
       console.log('Use "sapienx tui" for interactive mode.');
+      console.log('Use "sapienx status" to check status.');
+      console.log('Use "sapienx stop" to stop the daemon.');
     }
   });
 
@@ -96,10 +104,30 @@ program
   .command('stop')
   .description('Stop SapienX daemon')
   .action(() => {
+    // Try pm2 first
     try {
-      execSync('pm2 stop sapienx', { stdio: 'inherit' });
-    } catch {
-      console.log('pm2 not available or SapienX not running.');
+      execSync('pm2 stop sapienx 2>/dev/null', { stdio: 'inherit' });
+      return;
+    } catch {}
+
+    // Fall back to PID file
+    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
+    if (existsSync(pidPath)) {
+      const pid = readFileSync(pidPath, 'utf-8').trim();
+      if (!pid) {
+        console.log('No running SapienX daemon found.');
+        return;
+      }
+      try {
+        process.kill(parseInt(pid), 'SIGTERM');
+        writeFileSync(pidPath, '');
+        console.log(`SapienX stopped (PID: ${pid}).`);
+      } catch {
+        console.log(`Process ${pid} not running.`);
+        writeFileSync(pidPath, '');
+      }
+    } else {
+      console.log('No running SapienX daemon found.');
     }
   });
 
@@ -133,27 +161,102 @@ program
     child.on('exit', (code) => process.exit(code));
   });
 
-// sapienx setup
+// sapienx configure
 program
-  .command('setup')
-  .description('Run first-time setup (creates .env, checks deps)')
+  .command('configure')
+  .alias('setup')
+  .description('Configure SapienX settings (onboarding & reconfiguration)')
   .action(async () => {
+    console.log('\n=== SapienX Configuration ===\n');
+
     const envPath = join(projectRoot, '.env');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const ask = (q) => new Promise(resolve => rl.question(q, resolve));
+
+    // Load existing values if any
+    let existing = {};
     if (existsSync(envPath)) {
-      const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const answer = await new Promise(resolve =>
-        rl.question('.env already exists. Overwrite? (y/N): ', resolve)
-      );
-      rl.close();
-      if (answer.toLowerCase() !== 'y') {
-        console.log('Setup cancelled.');
-        return;
+      const content = readFileSync(envPath, 'utf-8');
+      for (const line of content.split('\n')) {
+        const match = line.match(/^([A-Z_]+)=(.*)$/);
+        if (match) existing[match[1]] = match[2];
       }
-      // Remove existing .env so ensureSetup runs fresh
-      const { unlinkSync } = await import('node:fs');
-      unlinkSync(envPath);
     }
-    await ensureSetup();
+
+    const askWithDefault = async (prompt, key) => {
+      const current = existing[key];
+      if (current) {
+        const answer = await ask(`${prompt} [${current}]: `);
+        return answer.trim() || current;
+      }
+      return (await ask(`${prompt}: `)).trim();
+    };
+
+    // 1. Owner info
+    console.log('1. Owner Settings\n');
+    const name = await askWithDefault('  Your name', 'OWNER_NAME');
+    const phone = await askWithDefault('  WhatsApp phone (country code, no +)', 'OWNER_PHONE');
+
+    // 2. API keys
+    console.log('\n2. API Keys\n');
+    const apiKey = await askWithDefault('  Anthropic API key (blank to skip)', 'ANTHROPIC_API_KEY');
+    const telegramToken = await askWithDefault('  Telegram bot token (blank to skip)', 'TELEGRAM_BOT_TOKEN');
+
+    // 3. WhatsApp
+    console.log('\n3. WhatsApp\n');
+    const waAuthPath = join(projectRoot, '.wwebjs_auth');
+    if (existsSync(waAuthPath)) {
+      console.log('  WhatsApp session: saved (will auto-connect)');
+      const resetWa = await ask('  Reset WhatsApp session? (y/N): ');
+      if (resetWa.toLowerCase() === 'y') {
+        const { rmSync } = await import('node:fs');
+        rmSync(waAuthPath, { recursive: true });
+        console.log('  WhatsApp session cleared. Will show QR on next start.');
+      }
+    } else {
+      console.log('  WhatsApp: not configured yet. QR code will show on first start.');
+    }
+
+    // 4. Claude CLI
+    console.log('\n4. Claude CLI\n');
+    try {
+      const ver = execSync('claude --version', { encoding: 'utf-8' }).trim();
+      console.log(`  Claude CLI: ${ver}`);
+    } catch {
+      console.log('  Claude CLI: not installed');
+      const installClaude = await ask('  Install Claude CLI now? (y/N): ');
+      if (installClaude.toLowerCase() === 'y') {
+        console.log('  Installing...');
+        execSync('npm install -g @anthropic-ai/claude-code', { stdio: 'inherit' });
+      }
+    }
+
+    rl.close();
+
+    // Write .env
+    const envContent = [
+      '# SapienX Configuration',
+      `OWNER_PHONE=${phone}`,
+      `OWNER_NAME=${name}`,
+      `ANTHROPIC_API_KEY=${apiKey || ''}`,
+      `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
+      ''
+    ].join('\n');
+    writeFileSync(envPath, envContent);
+
+    // Ensure data dirs
+    const schedulesPath = join(projectRoot, 'data', 'schedules.json');
+    const schedulesExample = join(projectRoot, 'data', 'schedules.example.json');
+    if (!existsSync(schedulesPath) && existsSync(schedulesExample)) {
+      copyFileSync(schedulesExample, schedulesPath);
+    }
+
+    console.log('\n=== Configuration saved! ===\n');
+    console.log('Next steps:');
+    console.log('  sapienx tui      — interactive terminal chat');
+    console.log('  sapienx start    — start daemon (WhatsApp)');
+    console.log('  sapienx status   — check status');
+    console.log('');
   });
 
 // sapienx status
@@ -161,11 +264,133 @@ program
   .command('status')
   .description('Show SapienX status')
   .action(() => {
+    console.log('=== SapienX Status ===\n');
+
+    // Check daemon
+    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
+    let daemonRunning = false;
+    if (existsSync(pidPath)) {
+      const pid = readFileSync(pidPath, 'utf-8').trim();
+      if (pid) {
+        try {
+          process.kill(parseInt(pid), 0); // test if alive
+          daemonRunning = true;
+          console.log(`  Daemon: RUNNING (PID: ${pid})`);
+        } catch {
+          console.log('  Daemon: STOPPED');
+        }
+      } else {
+        console.log('  Daemon: STOPPED');
+      }
+    } else {
+      console.log('  Daemon: NOT STARTED');
+    }
+
+    // Check .env
+    const envPath = join(projectRoot, '.env');
+    if (existsSync(envPath)) {
+      const env = readFileSync(envPath, 'utf-8');
+      const phone = env.match(/^OWNER_PHONE=(.*)$/m)?.[1] || 'not set';
+      const name = env.match(/^OWNER_NAME=(.*)$/m)?.[1] || 'not set';
+      console.log(`  Owner: ${name} (${phone})`);
+    } else {
+      console.log('  Config: NOT SET UP (run: sapienx setup)');
+    }
+
+    // Check WhatsApp auth
+    const waAuthPath = join(projectRoot, '.wwebjs_auth');
+    if (existsSync(waAuthPath)) {
+      console.log('  WhatsApp: configured (session saved)');
+    } else {
+      console.log('  WhatsApp: NOT configured (needs QR scan)');
+    }
+
+    // Check Claude CLI
     try {
-      const result = execSync('pm2 show sapienx', { encoding: 'utf-8' });
-      console.log(result);
+      execSync('claude --version', { stdio: 'ignore' });
+      console.log('  Claude CLI: installed');
     } catch {
-      console.log('SapienX is not running via pm2.');
+      console.log('  Claude CLI: NOT INSTALLED');
+    }
+
+    // Check logs
+    const logPath = join(projectRoot, 'data', 'sapienx.log');
+    if (existsSync(logPath)) {
+      console.log(`\n  Logs: ${logPath}`);
+      console.log('  Last 5 lines:');
+      try {
+        const lines = readFileSync(logPath, 'utf-8').trim().split('\n').slice(-5);
+        lines.forEach(l => console.log(`    ${l}`));
+      } catch {}
+    }
+
+    console.log('');
+  });
+
+// sapienx whatsapp
+program
+  .command('whatsapp [action]')
+  .description('WhatsApp management (status, reset, logs)')
+  .action(async (action) => {
+    const waAuthPath = join(projectRoot, '.wwebjs_auth');
+
+    if (action === 'reset') {
+      // Delete saved session to force new QR scan
+      const { rmSync } = await import('node:fs');
+      if (existsSync(waAuthPath)) {
+        rmSync(waAuthPath, { recursive: true });
+        console.log('WhatsApp session cleared. Next start will show a new QR code.');
+        console.log('Run: sapienx start');
+      } else {
+        console.log('No WhatsApp session to clear.');
+      }
+    } else if (action === 'logs') {
+      const logPath = join(projectRoot, 'data', 'sapienx.log');
+      if (existsSync(logPath)) {
+        const lines = readFileSync(logPath, 'utf-8').trim().split('\n');
+        const waLines = lines.filter(l => l.includes('[WhatsApp]'));
+        if (waLines.length > 0) {
+          console.log('WhatsApp log entries (last 20):');
+          waLines.slice(-20).forEach(l => console.log(`  ${l}`));
+        } else {
+          console.log('No WhatsApp log entries found.');
+        }
+      } else {
+        console.log('No logs yet. Start the daemon first: sapienx start');
+      }
+    } else {
+      // Default: show status
+      console.log('=== WhatsApp Status ===\n');
+      if (existsSync(waAuthPath)) {
+        console.log('  Session: saved (will auto-connect on start)');
+      } else {
+        console.log('  Session: not configured (will show QR on next start)');
+      }
+      console.log('\nCommands:');
+      console.log('  sapienx whatsapp         — show status');
+      console.log('  sapienx whatsapp reset   — clear session, re-scan QR');
+      console.log('  sapienx whatsapp logs    — show WhatsApp log entries');
+    }
+  });
+
+// sapienx logs
+program
+  .command('logs')
+  .description('Show daemon logs')
+  .option('-f, --follow', 'Follow log output')
+  .option('-n, --lines <n>', 'Number of lines to show', '20')
+  .action((opts) => {
+    const logPath = join(projectRoot, 'data', 'sapienx.log');
+    if (!existsSync(logPath)) {
+      console.log('No logs yet. Start the daemon first: sapienx start');
+      return;
+    }
+    if (opts.follow) {
+      const child = spawn('tail', ['-f', logPath], { stdio: 'inherit' });
+      child.on('exit', (code) => process.exit(code));
+    } else {
+      const lines = readFileSync(logPath, 'utf-8').trim().split('\n');
+      lines.slice(-parseInt(opts.lines)).forEach(l => console.log(l));
     }
   });
 

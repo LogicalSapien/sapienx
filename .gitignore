@@ -4,5 +4,6 @@ node_modules/
 data/sessions.json
 data/schedules.json
 .sapienx-ready
+data/sapienx.pid
 *.log
 .DS_Store
