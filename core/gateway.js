@@ -53,6 +53,14 @@ export class Gateway {
     const ownerPhone = (this.config.owner.phone || '').replace(/^\+/, '');
     const senderPhone = (msg.from || '').replace(/^\+/, '');
 
+    console.log(`[Gateway] Routing: sender="${senderPhone}" owner="${ownerPhone}" match=${senderPhone === ownerPhone} isSelfChat=${msg.metadata?.isSelfChat}`);
+
+    // Allow self-chat messages (messaging yourself on WhatsApp)
+    if (msg.metadata?.isSelfChat) {
+      this.bus.emit('message:routed', msg);
+      return;
+    }
+
     // Check pending replies from non-owner (smart task replies)
     if (senderPhone !== ownerPhone) {
       const reply = this._matchPendingReply(msg);

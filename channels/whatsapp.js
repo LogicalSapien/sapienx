@@ -84,6 +84,9 @@ export class WhatsAppChannel extends BaseChannel {
       ? msg.author?.replace('@c.us', '') || from
       : from;
 
+    // Detect self-chat
+    const isSelfChat = !isGroup && chat.id._serialized === msg.from;
+
     this.bus.emit('message:incoming', {
       id: msg.id._serialized,
       channel: 'whatsapp',
@@ -92,6 +95,7 @@ export class WhatsAppChannel extends BaseChannel {
       timestamp: msg.timestamp * 1000,
       metadata: {
         isGroup,
+        isSelfChat,
         groupId: isGroup ? msg.from : null,
         chatId: msg.from,
         rawMsg: msg
