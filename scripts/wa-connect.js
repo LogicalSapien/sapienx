@@ -24,8 +24,13 @@ let qrShown = false;
 
 client.on('qr', (qr) => {
   qrShown = true;
-  console.error('QR_READY');
-  qrcode.generate(qr, { small: true });
+  // Write QR to stderr (stdout is reserved for JSON result)
+  process.stderr.write('\n  Scan this QR code with your phone:\n');
+  process.stderr.write('  (WhatsApp > Settings > Linked Devices > Link a Device)\n\n');
+  // qrcode.generate writes to stdout by default — redirect via callback
+  qrcode.generate(qr, { small: true }, (qrText) => {
+    process.stderr.write(qrText + '\n');
+  });
 });
 
 client.on('ready', async () => {
