@@ -134,19 +134,6 @@ if [ ! -f "$SAPIENX_HOME/data/schedules.json" ] && [ -f data/schedules.example.j
   cp data/schedules.example.json "$SAPIENX_HOME/data/schedules.json"
 fi
 
-# Migrate existing data from project dir to ~/.sapienx
-if [ -f .env ] && [ ! -f "$SAPIENX_HOME/.env" ]; then
-  echo "  Migrating .env to $SAPIENX_HOME/.env"
-  cp .env "$SAPIENX_HOME/.env"
-fi
-if [ -d .wwebjs_auth ] && [ ! -d "$SAPIENX_HOME/.wwebjs_auth" ]; then
-  echo "  Migrating WhatsApp auth to $SAPIENX_HOME/.wwebjs_auth"
-  cp -r .wwebjs_auth "$SAPIENX_HOME/.wwebjs_auth"
-fi
-if [ -f data/sessions.json ] && [ ! -f "$SAPIENX_HOME/data/sessions.json" ]; then
-  cp data/sessions.json "$SAPIENX_HOME/data/sessions.json"
-fi
-
 # -------------------------------------------
 # 7. Install pm2 for process management
 # -------------------------------------------
