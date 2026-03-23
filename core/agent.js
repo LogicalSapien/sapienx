@@ -423,18 +423,26 @@ export class Agent {
       '- {{/remind tomorrow at 9:00 "message"}} — tomorrow at specific time',
       '- {{/cron "0 9 * * 1-5" command}} — recurring cron schedule',
       '',
+      'REMINDER TYPES:',
+      '- Simple: {{/remind in 5m "Take out bins"}} — sends text, no AI processing',
+      '- AI-powered: {{/remind in 5m "ai: Set another reminder for 10 mins to check deploy"}}',
+      '  When the message starts with "ai:", it triggers a FULL Claude CLI call when the reminder fires.',
+      '  Claude then processes the prompt and can set new reminders, run commands, check things, etc.',
+      '  This is how you chain reminders — the first reminder triggers Claude, which sets the next one.',
+      '',
       'IMPORTANT RULES:',
       '- You CAN set multiple reminders in one response. Use separate {{}} for each.',
-      '- For chained reminders like "remind me in 5m to do X, then 10m later do Y":',
-      '  PREFERRED: Set both at once with offsets: {{/remind in 5m "X"}} {{/remind in 15m "Y"}}',
-      '  ALSO WORKS: Embed a command inside a reminder to chain them:',
-      '  {{/remind in 5m "Time to do X {{/remind in 10m \\"Now do Y\\"}}"}}',
-      '  When the 5m reminder fires, it auto-executes the embedded /remind for 10m.',
+      '- For simple chains where timing is known upfront, set both at once:',
+      '  {{/remind in 5m "Do X"}} {{/remind in 15m "Do Y"}}',
+      '- For dynamic chains where the next step depends on context, use ai: prefix:',
+      '  {{/remind in 5m "ai: Check if the deploy succeeded. If not, set a 10m retry reminder."}}',
+      '- Use "ai:" when the reminder needs intelligence: checking status, making decisions, running commands.',
+      '- Use plain text when it\'s just a notification: "Take out bins", "Call Bob".',
       '- NEVER tell the user to set a reminder themselves. YOU set it using {{}} syntax.',
       '- Always confirm what you\'ve scheduled in plain text.',
       '',
-      'Example — user says "remind me in 5 mins to call Bob, and at 6pm to pick up groceries":',
-      'Done! Two reminders set: {{/remind in 5m "Call Bob"}} {{/remind at 18:00 "Pick up groceries"}}',
+      'Example — user says "in 5 mins check if nginx is running, if not restart it and check again in 2 mins":',
+      'On it! {{/remind in 5m "ai: Check if nginx is running with systemctl status nginx. If it is down, restart it and set a follow-up check in 2 minutes."}}',
       '',
       'Available skills (fast-path, no AI needed):',
       skillList,
@@ -561,32 +569,41 @@ export class Agent {
   }
 
   async _handleReminder(data) {
-    let text = `Reminder: ${data.message}`;
+    const message = data.message || '';
 
-    // Check for embedded {{commands}} in the reminder message and execute them
-    const commandPattern = /\{\{(\/\w+[^}]*)\}\}/g;
-    let match;
-    while ((match = commandPattern.exec(data.message)) !== null) {
-      const command = match[1].trim();
-      console.log(`[Agent] Reminder chaining — executing: ${command}`);
-      try {
-        this._executeEmbeddedCommand(command, {
-          channel: data.channel,
-          from: data.to,
-          metadata: { chatId: data.to }
-        });
-      } catch (err) {
-        console.error(`[Agent] Chained command failed: ${err.message}`);
-      }
-      // Remove {{command}} from display text
-      text = text.replace(match[0], '').trim();
+    // If message starts with "ai:" — route through Claude CLI as a full agent message
+    if (message.startsWith('ai:')) {
+      const prompt = message.slice(3).trim();
+      console.log(`[Agent] Reminder → Claude CLI: "${prompt.substring(0, 80)}"`);
+
+      // Notify user that the reminder fired and is being processed
+      this.bus.emit('message:outgoing', {
+        id: uuidv4(),
+        channel: data.channel,
+        to: data.to,
+        text: `⏰ Reminder triggered — processing: "${prompt.substring(0, 100)}"`,
+        timestamp: Date.now(),
+        metadata: {}
+      });
+
+      // Route through the agent as if the owner sent this message
+      this.bus.emit('message:routed', {
+        id: uuidv4(),
+        channel: data.channel,
+        from: this.config.owner.phone || data.to,
+        text: prompt,
+        timestamp: Date.now(),
+        metadata: { chatId: data.to, fromReminder: true }
+      });
+      return;
     }
 
+    // Regular reminder — just send the text
     this.bus.emit('message:outgoing', {
       id: uuidv4(),
       channel: data.channel,
       to: data.to,
-      text,
+      text: `Reminder: ${message}`,
       timestamp: Date.now(),
       metadata: {}
     });
