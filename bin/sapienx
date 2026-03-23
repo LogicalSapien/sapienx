@@ -242,6 +242,18 @@ async function runConfigure() {
         ]);
 
         if (fetchAnswer.fetch) {
+          // Stop running daemon first — can't share WhatsApp session
+          const pidPath2 = join(projectRoot, 'data', 'sapienx.pid');
+          let stoppedDaemon = false;
+          if (existsSync(pidPath2)) {
+            const pid = readFileSync(pidPath2, 'utf-8').trim();
+            if (pid) {
+              try { process.kill(parseInt(pid), 'SIGTERM'); stoppedDaemon = true; } catch {}
+              writeFileSync(pidPath2, '');
+              await new Promise(r => setTimeout(r, 2000)); // wait for cleanup
+            }
+          }
+          if (stoppedDaemon) console.log('  Stopped daemon to access WhatsApp.');
           console.log('  Connecting to WhatsApp to fetch groups...');
           try {
             const pkg = (await import('whatsapp-web.js')).default;
