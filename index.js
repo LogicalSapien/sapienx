@@ -102,7 +102,10 @@ async function main() {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  console.log('SapienX is running.');
+  // Emit startup complete — channels handle displaying this
+  if (!tuiOnly) {
+    console.log('SapienX is running.');
+  }
 }
 
 main().catch((err) => {
