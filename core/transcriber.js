@@ -106,15 +106,24 @@ export class Transcriber {
 
     // Try local whisper binary
     try {
-      const result = execSync(`whisper "${wavPath}" --output_format txt --output_dir /tmp 2>/dev/null`, {
-        encoding: 'utf-8',
-        timeout: 60000
+      const baseName = wavPath.replace(/\.[^.]+$/, '');
+      const txtOutput = `/tmp/${wavPath.split('/').pop().replace(/\.[^.]+$/, '')}.txt`;
+      execSync(`whisper "${wavPath}" --model base --language en --output_format txt --output_dir /tmp 2>/dev/null`, {
+        timeout: 120000
       });
-      return result.trim() || '[Voice message — transcription empty]';
-    } catch {}
+      const { readFileSync: readF } = await import('node:fs');
+      const text = readF(txtOutput, 'utf-8').trim();
+      try { unlinkSync(txtOutput); } catch {}
+      if (text) {
+        console.log(`[Transcriber] Whisper transcribed: "${text.substring(0, 80)}"`);
+        return `[Voice message]: ${text}`;
+      }
+    } catch (err) {
+      console.error(`[Transcriber] Local whisper failed: ${err.message?.substring(0, 100)}`);
+    }
 
-    // Fallback: tell Claude the file exists and let it handle it
-    return `[Voice message received] Audio saved at ${filePath}. Unable to transcribe automatically — ffmpeg or whisper not available.`;
+    // Fallback: keep the file and let Claude handle it
+    return `[Voice message received] Audio saved at ${filePath}. Transcription failed — you can try processing the file manually.`;
   }
 
   async _whisperApi(filePath, apiKey) {

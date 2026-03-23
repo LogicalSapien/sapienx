@@ -21,7 +21,7 @@ if [ -t 0 ]; then
   INTERACTIVE=true
 fi
 
-TOTAL_STEPS=9
+TOTAL_STEPS=10
 
 echo ""
 echo "╔══════════════════════════════════════╗"
@@ -135,10 +135,38 @@ if [ ! -f "$SAPIENX_HOME/data/schedules.json" ] && [ -f data/schedules.example.j
 fi
 
 # -------------------------------------------
-# 7. Install pm2 for process management
+# 7. Install ffmpeg + whisper for voice transcription
 # -------------------------------------------
 echo ""
-echo "[7/$TOTAL_STEPS] Checking pm2..."
+echo "[7/$TOTAL_STEPS] Checking voice transcription..."
+if command -v ffmpeg &> /dev/null; then
+  echo "  ffmpeg found."
+else
+  echo "  Installing ffmpeg..."
+  if [ "$OS" = "Linux" ]; then
+    apt-get install -y ffmpeg 2>/dev/null || sudo apt-get install -y ffmpeg 2>/dev/null || echo "  ffmpeg install failed. Install manually."
+  elif [ "$OS" = "Darwin" ]; then
+    brew install ffmpeg 2>/dev/null || echo "  ffmpeg install failed. Install manually: brew install ffmpeg"
+  fi
+fi
+if command -v whisper &> /dev/null; then
+  echo "  whisper found."
+else
+  echo "  Installing OpenAI Whisper (voice transcription)..."
+  if command -v pip &> /dev/null || command -v pip3 &> /dev/null; then
+    PIP=$(command -v pip3 || command -v pip)
+    $PIP install --break-system-packages openai-whisper 2>/dev/null || $PIP install openai-whisper 2>/dev/null || echo "  whisper install failed. Voice messages will use fallback."
+    echo "  whisper installed."
+  else
+    echo "  pip not found. Skipping whisper. Voice messages will use fallback."
+  fi
+fi
+
+# -------------------------------------------
+# 8. Install pm2 for process management
+# -------------------------------------------
+echo ""
+echo "[8/$TOTAL_STEPS] Checking pm2..."
 if command -v pm2 &> /dev/null; then
   echo "  pm2 $(pm2 --version) found."
 else
@@ -151,10 +179,10 @@ else
 fi
 
 # -------------------------------------------
-# 8. Link sapienx command globally
+# 9. Link sapienx command globally
 # -------------------------------------------
 echo ""
-echo "[8/$TOTAL_STEPS] Linking sapienx command..."
+echo "[9/$TOTAL_STEPS] Linking sapienx command..."
 if npm link 2>/dev/null; then
   echo "  'sapienx' command available globally."
 else
@@ -170,10 +198,10 @@ else
 fi
 
 # -------------------------------------------
-# 9. Configure
+# 10. Configure
 # -------------------------------------------
 echo ""
-echo "[9/$TOTAL_STEPS] Configuration..."
+echo "[10/$TOTAL_STEPS] Configuration..."
 
 if [ "$INTERACTIVE" = true ]; then
   # Running interactively (e.g. bash scripts/setup.sh) — launch configure wizard
