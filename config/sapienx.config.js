@@ -3,8 +3,12 @@ import 'dotenv/config';
 export default {
   owner: {
     phone: process.env.OWNER_PHONE,
-    name: process.env.OWNER_NAME || 'owner'
+    name: process.env.OWNER_NAME || 'owner',
+    allowedNumbers: (process.env.ALLOWED_NUMBERS || '').split(',').filter(Boolean)
   },
+
+  groupPolicy: process.env.GROUP_POLICY || 'ignore', // 'ignore', 'allowlist', 'all'
+  allowedGroups: (process.env.ALLOWED_GROUPS || '').split(',').filter(Boolean),
 
   channels: {
     whatsapp: {

@@ -222,12 +222,34 @@ program
     let phone = await askWithDefault('  WhatsApp phone (country code, no +)', 'OWNER_PHONE');
     phone = phone.replace(/^\+/, '').replace(/\s/g, ''); // strip + and spaces
 
-    // 2. API keys
-    console.log('\n2. API Keys\n');
+    // 2. Allowed numbers (who can message SapienX)
+    console.log('\n2. Allowed Numbers\n');
+    console.log('  These numbers can send messages to SapienX via WhatsApp.');
+    console.log('  Your owner number is always allowed. Add others (e.g., family, work phone).');
+    let allowedNumbers = await askWithDefault('  Allowed numbers (comma-separated, blank for owner only)', 'ALLOWED_NUMBERS');
+    allowedNumbers = allowedNumbers.replace(/\s/g, '').replace(/\+/g, ''); // clean up
+
+    // 3. Group policy
+    console.log('\n3. Group Policy\n');
+    console.log('  How should SapienX handle WhatsApp group messages?');
+    console.log('  a) ignore  — ignore all group messages (default)');
+    console.log('  b) allowlist — only respond in groups you specify');
+    console.log('  c) all     — respond in all groups SapienX is added to');
+    let groupPolicy = await askWithDefault('  Group policy (ignore/allowlist/all)', 'GROUP_POLICY');
+    groupPolicy = groupPolicy.toLowerCase() || 'ignore';
+
+    let allowedGroups = '';
+    if (groupPolicy === 'allowlist') {
+      console.log('\n  Enter group IDs (comma-separated). Use "sapienx groups" to find IDs.');
+      allowedGroups = await askWithDefault('  Allowed group IDs', 'ALLOWED_GROUPS');
+    }
+
+    // 4. API keys
+    console.log('\n4. API Keys\n');
     const apiKey = await askWithDefault('  Anthropic API key (blank to skip)', 'ANTHROPIC_API_KEY');
     const telegramToken = await askWithDefault('  Telegram bot token (blank to skip)', 'TELEGRAM_BOT_TOKEN');
 
-    // 3. WhatsApp
+    // 5. WhatsApp
     console.log('\n3. WhatsApp\n');
     const waAuthPath = join(projectRoot, '.wwebjs_auth');
     let needsWhatsAppLink = false;
@@ -244,14 +266,7 @@ program
           console.log('  (WhatsApp > Settings > Linked Devices > Link a Device)\n');
           rl.close();
           // Write .env first so config is available
-          const envContent = [
-            '# SapienX Configuration',
-            `OWNER_PHONE=${phone}`,
-            `OWNER_NAME=${name}`,
-            `ANTHROPIC_API_KEY=${apiKey || ''}`,
-            `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
-            ''
-          ].join('\n');
+          const envContent = buildEnv();
           writeFileSync(envPath, envContent);
           // Start in foreground with WhatsApp — shows QR and waits
           const child = spawn('node', [join(projectRoot, 'index.js')], {
@@ -288,8 +303,21 @@ program
       needsWhatsAppLink = true;
     }
 
-    // 4. Claude CLI
-    console.log('\n4. Claude CLI\n');
+    // Helper to build .env content
+    const buildEnv = () => [
+      '# SapienX Configuration',
+      `OWNER_PHONE=${phone}`,
+      `OWNER_NAME=${name}`,
+      `ALLOWED_NUMBERS=${allowedNumbers || ''}`,
+      `GROUP_POLICY=${groupPolicy || 'ignore'}`,
+      `ALLOWED_GROUPS=${allowedGroups || ''}`,
+      `ANTHROPIC_API_KEY=${apiKey || ''}`,
+      `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
+      ''
+    ].join('\n');
+
+    // 6. Claude CLI
+    console.log('\n6. Claude CLI\n');
     try {
       const ver = execSync('claude --version', { encoding: 'utf-8' }).trim();
       console.log(`  Claude CLI: ${ver}`);
@@ -305,15 +333,7 @@ program
     rl.close();
 
     // Write .env
-    const envContent = [
-      '# SapienX Configuration',
-      `OWNER_PHONE=${phone}`,
-      `OWNER_NAME=${name}`,
-      `ANTHROPIC_API_KEY=${apiKey || ''}`,
-      `TELEGRAM_BOT_TOKEN=${telegramToken || ''}`,
-      ''
-    ].join('\n');
-    writeFileSync(envPath, envContent);
+    writeFileSync(envPath, buildEnv());
 
     // Ensure data dirs
     const schedulesPath = join(projectRoot, 'data', 'schedules.json');

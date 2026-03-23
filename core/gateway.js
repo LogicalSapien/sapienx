@@ -33,6 +33,18 @@ export class Gateway {
     this._processing.set(queueKey, false);
   }
 
+  _isAllowedSender(senderPhone) {
+    const ownerPhone = (this.config.owner.phone || '').replace(/^\+/, '');
+    const normalized = senderPhone.replace(/^\+/, '');
+
+    // Owner always allowed
+    if (normalized === ownerPhone) return true;
+
+    // Check allowed numbers list
+    const allowed = this.config.owner.allowedNumbers || [];
+    return allowed.some(num => num.replace(/^\+/, '') === normalized);
+  }
+
   async _route(msg) {
     // TUI messages always pass through
     if (msg.channel === 'tui') {
@@ -40,41 +52,59 @@ export class Gateway {
       return;
     }
 
-    // Check group messages
+    // Handle group messages based on policy
     if (msg.metadata?.isGroup) {
       const groupId = msg.metadata.groupId;
-      const groupConfig = this.config.groups[groupId];
-      if (!groupConfig || !groupConfig.enabled) return;
-      this.bus.emit('message:routed', { ...msg, groupConfig });
-      return;
+      const policy = this.config.groupPolicy || 'ignore';
+
+      if (policy === 'ignore') {
+        return; // drop all group messages
+      }
+
+      if (policy === 'allowlist') {
+        // Check per-group config (old style) or allowedGroups list
+        const groupConfig = this.config.groups?.[groupId];
+        const allowedGroups = this.config.allowedGroups || [];
+        const isAllowed = (groupConfig && groupConfig.enabled) || allowedGroups.includes(groupId);
+        if (!isAllowed) return;
+        this.bus.emit('message:routed', { ...msg, groupConfig });
+        return;
+      }
+
+      if (policy === 'all') {
+        // Respond in all groups
+        this.bus.emit('message:routed', msg);
+        return;
+      }
+
+      return; // unknown policy = ignore
     }
-
-    // Normalize phone numbers for comparison (strip + prefix)
-    const ownerPhone = (this.config.owner.phone || '').replace(/^\+/, '');
-    const senderPhone = (msg.from || '').replace(/^\+/, '');
-
-    console.log(`[Gateway] Routing: sender="${senderPhone}" owner="${ownerPhone}" match=${senderPhone === ownerPhone} isSelfChat=${msg.metadata?.isSelfChat}`);
 
     // Allow self-chat messages (messaging yourself on WhatsApp)
     if (msg.metadata?.isSelfChat) {
+      console.log(`[Gateway] Self-chat message routed`);
       this.bus.emit('message:routed', msg);
       return;
     }
 
-    // Check pending replies from non-owner (smart task replies)
-    if (senderPhone !== ownerPhone) {
-      const reply = this._matchPendingReply(msg);
-      if (reply) {
-        this.bus.emit('task:reply', { taskId: reply.taskId, message: msg });
-        this.pendingReplies.delete(reply.taskId);
-        return;
-      }
-      // Drop non-owner, non-reply messages
+    // Check if sender is allowed (owner or allowlisted number)
+    const senderPhone = (msg.from || '').replace(/^\+/, '');
+    if (this._isAllowedSender(senderPhone)) {
+      console.log(`[Gateway] Allowed sender: ${senderPhone}`);
+      this.bus.emit('message:routed', msg);
       return;
     }
 
-    // Owner message — route to agent
-    this.bus.emit('message:routed', msg);
+    // Check pending replies from non-allowed senders (smart task replies)
+    const reply = this._matchPendingReply(msg);
+    if (reply) {
+      this.bus.emit('task:reply', { taskId: reply.taskId, message: msg });
+      this.pendingReplies.delete(reply.taskId);
+      return;
+    }
+
+    // Drop unrecognized messages
+    console.log(`[Gateway] Dropped message from unknown sender: ${senderPhone}`);
   }
 
   _matchPendingReply(msg) {
