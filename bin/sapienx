@@ -327,52 +327,6 @@ program
     console.log('');
   });
 
-// sapienx whatsapp
-program
-  .command('whatsapp [action]')
-  .description('WhatsApp management (status, reset, logs)')
-  .action(async (action) => {
-    const waAuthPath = join(projectRoot, '.wwebjs_auth');
-
-    if (action === 'reset') {
-      // Delete saved session to force new QR scan
-      const { rmSync } = await import('node:fs');
-      if (existsSync(waAuthPath)) {
-        rmSync(waAuthPath, { recursive: true });
-        console.log('WhatsApp session cleared. Next start will show a new QR code.');
-        console.log('Run: sapienx start');
-      } else {
-        console.log('No WhatsApp session to clear.');
-      }
-    } else if (action === 'logs') {
-      const logPath = join(projectRoot, 'data', 'sapienx.log');
-      if (existsSync(logPath)) {
-        const lines = readFileSync(logPath, 'utf-8').trim().split('\n');
-        const waLines = lines.filter(l => l.includes('[WhatsApp]'));
-        if (waLines.length > 0) {
-          console.log('WhatsApp log entries (last 20):');
-          waLines.slice(-20).forEach(l => console.log(`  ${l}`));
-        } else {
-          console.log('No WhatsApp log entries found.');
-        }
-      } else {
-        console.log('No logs yet. Start the daemon first: sapienx start');
-      }
-    } else {
-      // Default: show status
-      console.log('=== WhatsApp Status ===\n');
-      if (existsSync(waAuthPath)) {
-        console.log('  Session: saved (will auto-connect on start)');
-      } else {
-        console.log('  Session: not configured (will show QR on next start)');
-      }
-      console.log('\nCommands:');
-      console.log('  sapienx whatsapp         — show status');
-      console.log('  sapienx whatsapp reset   — clear session, re-scan QR');
-      console.log('  sapienx whatsapp logs    — show WhatsApp log entries');
-    }
-  });
-
 // sapienx logs
 program
   .command('logs')
