@@ -15,7 +15,9 @@ npm install
 
 echo "Running migrations..."
 MIGRATION_DIR="$PROJECT_DIR/scripts/migrations"
-MIGRATION_LOG="$PROJECT_DIR/data/.migrations"
+SAPIENX_HOME="${SAPIENX_HOME:-$HOME/.sapienx}"
+MIGRATION_LOG="$SAPIENX_HOME/data/.migrations"
+mkdir -p "$SAPIENX_HOME/data"
 touch "$MIGRATION_LOG"
 if [ -d "$MIGRATION_DIR" ]; then
   for migration in "$MIGRATION_DIR"/*.js; do

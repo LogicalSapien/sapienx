@@ -1,4 +1,16 @@
-import 'dotenv/config';
+import { config as dotenvConfig } from 'dotenv';
+import paths from './paths.js';
+
+// Load .env from ~/.sapienx/.env (fall back to project root for migration)
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+if (existsSync(paths.env)) {
+  dotenvConfig({ path: paths.env });
+} else {
+  dotenvConfig({ path: join(__dirname, '..', '.env') });
+}
 
 export default {
   owner: {
@@ -66,7 +78,7 @@ export default {
 
   scheduler: {
     enabled: true,
-    persistPath: './data/schedules.json'
+    persistPath: paths.schedules
   },
 
   health: {

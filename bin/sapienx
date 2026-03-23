@@ -6,14 +6,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
+import paths from '../config/paths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..');
 
 // --- First-run setup ---
 async function ensureSetup() {
-  const envPath = join(projectRoot, '.env');
-  if (existsSync(envPath)) return; // already configured
+  if (existsSync(paths.env)) return; // already configured
 
   console.log('\nNo .env file found. Running first-time setup...\n');
   await runConfigure();
@@ -32,6 +32,7 @@ program
   .description('Start SapienX daemon (via pm2)')
   .action(async () => {
     await ensureSetup();
+    paths.ensureDirs();
     try {
       execSync(`pm2 start ${join(projectRoot, 'ecosystem.config.js')}`, {
         stdio: 'inherit',
@@ -39,18 +40,17 @@ program
       });
     } catch {
       console.log('Starting SapienX daemon...');
-      const logPath = join(projectRoot, 'data', 'sapienx.log');
       // Clear old log for fresh start
-      writeFileSync(logPath, '');
+      writeFileSync(paths.log, '');
       const fs = await import('node:fs');
-      const logFd = fs.openSync(logPath, 'a');
+      const logFd = fs.openSync(paths.log, 'a');
       const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
         stdio: ['ignore', logFd, logFd],
         cwd: projectRoot,
         detached: true
       });
       child.unref();
-      writeFileSync(join(projectRoot, 'data', 'sapienx.pid'), String(child.pid));
+      writeFileSync(paths.pid, String(child.pid));
 
       // Wait for WhatsApp to connect (poll log file)
       console.log(`Daemon started (PID: ${child.pid}). Waiting for WhatsApp...`);
@@ -58,7 +58,7 @@ program
       for (let i = 0; i < 30; i++) { // 30 seconds max
         await new Promise(r => setTimeout(r, 1000));
         try {
-          const log = readFileSync(logPath, 'utf-8');
+          const log = readFileSync(paths.log, 'utf-8');
           if (log.includes('[WhatsApp] Connected and ready.')) {
             connected = true;
             break;
@@ -93,20 +93,19 @@ program
     } catch {}
 
     // Fall back to PID file
-    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
-    if (existsSync(pidPath)) {
-      const pid = readFileSync(pidPath, 'utf-8').trim();
+    if (existsSync(paths.pid)) {
+      const pid = readFileSync(paths.pid, 'utf-8').trim();
       if (!pid) {
         console.log('No running SapienX daemon found.');
         return;
       }
       try {
         process.kill(parseInt(pid), 'SIGTERM');
-        writeFileSync(pidPath, '');
+        writeFileSync(paths.pid, '');
         console.log(`SapienX stopped (PID: ${pid}).`);
       } catch {
         console.log(`Process ${pid} not running.`);
-        writeFileSync(pidPath, '');
+        writeFileSync(paths.pid, '');
       }
     } else {
       console.log('No running SapienX daemon found.');
@@ -119,12 +118,11 @@ program
   .description('Restart SapienX daemon')
   .action(async () => {
     // Stop
-    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
-    if (existsSync(pidPath)) {
-      const pid = readFileSync(pidPath, 'utf-8').trim();
+    if (existsSync(paths.pid)) {
+      const pid = readFileSync(paths.pid, 'utf-8').trim();
       if (pid) {
         try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
-        writeFileSync(pidPath, '');
+        writeFileSync(paths.pid, '');
         console.log(`Stopped (PID: ${pid}).`);
         await new Promise(r => setTimeout(r, 2000));
       }
@@ -209,7 +207,8 @@ async function runConfigure() {
 
   console.log('\n=== SapienX Configuration ===\n');
 
-  const envPath = join(projectRoot, '.env');
+  paths.ensureDirs();
+  const envPath = paths.env;
 
   // Load existing values
   let existing = {};
@@ -256,11 +255,11 @@ async function runConfigure() {
     console.log('\n--- WhatsApp ---\n');
 
     // Step 1: Ensure WhatsApp is connected
-    const waAuthPath = join(projectRoot, '.wwebjs_auth');
+    const waAuthPath = paths.waAuth;
     let waGroups = []; // fetched groups for later use
 
     // Stop daemon if running (can't share session)
-    const pidPathWa = join(projectRoot, 'data', 'sapienx.pid');
+    const pidPathWa = paths.pid;
     if (existsSync(pidPathWa)) {
       const pid = readFileSync(pidPathWa, 'utf-8').trim();
       if (pid) {
@@ -421,29 +420,26 @@ async function runConfigure() {
   writeFileSync(envPath, envContent);
 
   // Ensure data dirs
-  const schedulesPath = join(projectRoot, 'data', 'schedules.json');
-  const schedulesExample = join(projectRoot, 'data', 'schedules.example.json');
-  if (!existsSync(schedulesPath) && existsSync(schedulesExample)) {
-    copyFileSync(schedulesExample, schedulesPath);
+  if (!existsSync(paths.schedules) && existsSync(join(projectRoot, 'data', 'schedules.example.json'))) {
+    copyFileSync(join(projectRoot, 'data', 'schedules.example.json'), paths.schedules);
   }
 
   console.log('\n=== Configuration saved! ===\n');
 
   // Stop any running daemon
-  const pidPath = join(projectRoot, 'data', 'sapienx.pid');
-  if (existsSync(pidPath)) {
-    const pid = readFileSync(pidPath, 'utf-8').trim();
+  if (existsSync(paths.pid)) {
+    const pid = readFileSync(paths.pid, 'utf-8').trim();
     if (pid) {
       try {
         process.kill(parseInt(pid), 'SIGTERM');
         console.log(`Stopped running daemon (PID: ${pid}).`);
-        writeFileSync(pidPath, '');
+        writeFileSync(paths.pid, '');
       } catch {}
     }
   }
 
   // Start SapienX
-  const waAuthExists = existsSync(join(projectRoot, '.wwebjs_auth'));
+  const waAuthExists = existsSync(paths.waAuth);
   const needsQr = channels.includes('whatsapp') && !waAuthExists;
 
   const startAnswer = await inquirer.prompt([
@@ -465,24 +461,23 @@ async function runConfigure() {
 
   if (startAnswer.startMode === 'daemon') {
     console.log('\nStarting SapienX daemon...');
-    const logPath = join(projectRoot, 'data', 'sapienx.log');
-    writeFileSync(logPath, '');
+    writeFileSync(paths.log, '');
     const fs = await import('node:fs');
-    const logFd = fs.openSync(logPath, 'a');
+    const logFd = fs.openSync(paths.log, 'a');
     const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
       stdio: ['ignore', logFd, logFd],
       cwd: projectRoot,
       detached: true
     });
     child.unref();
-    writeFileSync(join(projectRoot, 'data', 'sapienx.pid'), String(child.pid));
+    writeFileSync(paths.pid, String(child.pid));
 
     process.stdout.write('Waiting for WhatsApp');
     let connected = false;
     for (let i = 0; i < 30; i++) {
       await new Promise(r => setTimeout(r, 1000));
       try {
-        const log = readFileSync(logPath, 'utf-8');
+        const log = readFileSync(paths.log, 'utf-8');
         if (log.includes('[WhatsApp] Connected and ready.')) { connected = true; break; }
       } catch {}
       if (i % 3 === 2) process.stdout.write('.');
@@ -524,10 +519,9 @@ program
     console.log('=== SapienX Status ===\n');
 
     // Check daemon
-    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
     let daemonRunning = false;
-    if (existsSync(pidPath)) {
-      const pid = readFileSync(pidPath, 'utf-8').trim();
+    if (existsSync(paths.pid)) {
+      const pid = readFileSync(paths.pid, 'utf-8').trim();
       if (pid) {
         try {
           process.kill(parseInt(pid), 0); // test if alive
@@ -544,9 +538,8 @@ program
     }
 
     // Check .env
-    const envPath = join(projectRoot, '.env');
-    if (existsSync(envPath)) {
-      const env = readFileSync(envPath, 'utf-8');
+    if (existsSync(paths.env)) {
+      const env = readFileSync(paths.env, 'utf-8');
       const phone = env.match(/^OWNER_PHONE=(.*)$/m)?.[1] || 'not set';
       const name = env.match(/^OWNER_NAME=(.*)$/m)?.[1] || 'not set';
       console.log(`  Owner: ${name} (${phone})`);
@@ -555,7 +548,7 @@ program
     }
 
     // Check WhatsApp auth
-    const waAuthPath = join(projectRoot, '.wwebjs_auth');
+    const waAuthPath = paths.waAuth;
     if (existsSync(waAuthPath)) {
       console.log('  WhatsApp: configured (session saved)');
     } else {
@@ -571,12 +564,11 @@ program
     }
 
     // Check logs
-    const logPath = join(projectRoot, 'data', 'sapienx.log');
-    if (existsSync(logPath)) {
-      console.log(`\n  Logs: ${logPath}`);
+    if (existsSync(paths.log)) {
+      console.log(`\n  Logs: ${paths.log}`);
       console.log('  Last 5 lines:');
       try {
-        const lines = readFileSync(logPath, 'utf-8').trim().split('\n').slice(-5);
+        const lines = readFileSync(paths.log, 'utf-8').trim().split('\n').slice(-5);
         lines.forEach(l => console.log(`    ${l}`));
       } catch {}
     }
@@ -591,16 +583,15 @@ program
   .option('-f, --follow', 'Follow log output')
   .option('-n, --lines <n>', 'Number of lines to show', '20')
   .action((opts) => {
-    const logPath = join(projectRoot, 'data', 'sapienx.log');
-    if (!existsSync(logPath)) {
+    if (!existsSync(paths.log)) {
       console.log('No logs yet. Start the daemon first: sapienx start');
       return;
     }
     if (opts.follow) {
-      const child = spawn('tail', ['-f', logPath], { stdio: 'inherit' });
+      const child = spawn('tail', ['-f', paths.log], { stdio: 'inherit' });
       child.on('exit', (code) => process.exit(code));
     } else {
-      const lines = readFileSync(logPath, 'utf-8').trim().split('\n');
+      const lines = readFileSync(paths.log, 'utf-8').trim().split('\n');
       lines.slice(-parseInt(opts.lines)).forEach(l => console.log(l));
     }
   });

@@ -13,6 +13,7 @@ set -e
 
 REPO_URL="https://github.com/LogicalSapien/sapienx.git"
 INSTALL_DIR="${SAPIENX_DIR:-$HOME/sapienx}"
+SAPIENX_HOME="${SAPIENX_HOME:-$HOME/.sapienx}"
 
 # Detect if running interactively (TTY) or piped (curl | bash)
 INTERACTIVE=false
@@ -127,10 +128,23 @@ echo ""
 echo "[6/$TOTAL_STEPS] Installing dependencies..."
 npm install
 
-# Create data directories
-mkdir -p data/session-history
-if [ ! -f data/schedules.json ] && [ -f data/schedules.example.json ]; then
-  cp data/schedules.example.json data/schedules.json
+# Create ~/.sapienx data directories
+mkdir -p "$SAPIENX_HOME/data/session-history"
+if [ ! -f "$SAPIENX_HOME/data/schedules.json" ] && [ -f data/schedules.example.json ]; then
+  cp data/schedules.example.json "$SAPIENX_HOME/data/schedules.json"
+fi
+
+# Migrate existing data from project dir to ~/.sapienx
+if [ -f .env ] && [ ! -f "$SAPIENX_HOME/.env" ]; then
+  echo "  Migrating .env to $SAPIENX_HOME/.env"
+  cp .env "$SAPIENX_HOME/.env"
+fi
+if [ -d .wwebjs_auth ] && [ ! -d "$SAPIENX_HOME/.wwebjs_auth" ]; then
+  echo "  Migrating WhatsApp auth to $SAPIENX_HOME/.wwebjs_auth"
+  cp -r .wwebjs_auth "$SAPIENX_HOME/.wwebjs_auth"
+fi
+if [ -f data/sessions.json ] && [ ! -f "$SAPIENX_HOME/data/sessions.json" ]; then
+  cp data/sessions.json "$SAPIENX_HOME/data/sessions.json"
 fi
 
 # -------------------------------------------
@@ -180,11 +194,11 @@ if [ "$INTERACTIVE" = true ]; then
   sapienx configure 2>/dev/null || node bin/sapienx configure
 else
   # Running non-interactively (e.g. curl | bash) — skip interactive prompts
-  if [ -f .env ]; then
-    echo "  Existing .env found — keeping current configuration."
+  if [ -f "$SAPIENX_HOME/.env" ]; then
+    echo "  Existing config found at $SAPIENX_HOME/.env — keeping it."
   else
-    echo "  Creating default .env (customize later with: sapienx configure)"
-    cp .env.example .env
+    echo "  Creating default config at $SAPIENX_HOME/.env (customize later with: sapienx configure)"
+    cp .env.example "$SAPIENX_HOME/.env"
   fi
 fi
 

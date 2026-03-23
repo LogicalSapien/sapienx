@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import paths from './config/paths.js';
 import config from './config/sapienx.config.js';
 import { createBus } from './core/bus.js';
 import { SessionManager } from './core/session.js';
@@ -12,6 +12,9 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Ensure ~/.sapienx/ directory structure exists
+paths.ensureDirs();
 const tuiOnly = process.argv.includes('--tui-only');
 const daemonMode = process.argv.includes('--daemon');
 
@@ -23,10 +26,10 @@ async function main() {
 
   // 2. Session manager
   const sessionManager = new SessionManager(bus, config.sessions);
-  sessionManager.enablePersistence(join(__dirname, 'data', 'sessions.json'));
+  sessionManager.enablePersistence(paths.sessions);
 
   // 3. Session history
-  sessionManager.enableHistory(join(__dirname, 'data', 'session-history'));
+  sessionManager.enableHistory(paths.sessionHistory);
 
   // 4. Skill loader
   const skillPaths = config.skills.paths.map(p =>
@@ -53,12 +56,7 @@ async function main() {
   const gateway = new Gateway(bus, config);
 
   // 7. Scheduler
-  const scheduler = new Scheduler(bus, {
-    ...config.scheduler,
-    persistPath: config.scheduler.persistPath
-      ? join(__dirname, config.scheduler.persistPath.replace('./', ''))
-      : null
-  });
+  const scheduler = new Scheduler(bus, config.scheduler);
 
   // 8. Agent
   const agent = new Agent(bus, config, {

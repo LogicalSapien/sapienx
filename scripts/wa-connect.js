@@ -2,18 +2,16 @@
 import pkg from 'whatsapp-web.js';
 const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectRoot = join(__dirname, '..');
+import paths from '../config/paths.js';
 
 // Catch ALL errors to prevent crash
 process.on('unhandledRejection', () => {});
 process.on('uncaughtException', () => {});
 
+paths.ensureDirs();
+
 const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: join(projectRoot, '.wwebjs_auth') }),
+  authStrategy: new LocalAuth({ dataPath: paths.waAuth }),
   puppeteer: {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox']

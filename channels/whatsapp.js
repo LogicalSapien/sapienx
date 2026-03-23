@@ -3,6 +3,7 @@ const { Client, LocalAuth } = pkg;
 import qrcode from 'qrcode-terminal';
 import { BaseChannel } from './base.js';
 import { toWhatsApp } from './formatter.js';
+import paths from '../config/paths.js';
 
 export class WhatsAppChannel extends BaseChannel {
   constructor(bus, config) {
@@ -15,7 +16,7 @@ export class WhatsAppChannel extends BaseChannel {
 
   async start() {
     this.client = new Client({
-      authStrategy: new LocalAuth(),
+      authStrategy: new LocalAuth({ dataPath: paths.waAuth }),
       puppeteer: {
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
@@ -62,7 +63,7 @@ export class WhatsAppChannel extends BaseChannel {
         // Destroy and recreate client for retry
         try { await this.client.destroy(); } catch {}
         this.client = new Client({
-          authStrategy: new LocalAuth(),
+          authStrategy: new LocalAuth({ dataPath: paths.waAuth }),
           puppeteer: {
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
