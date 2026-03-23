@@ -10,11 +10,12 @@ export class ClaudeAdapter extends BaseAdapter {
   }
 
   buildArgs(prompt, sessionId, options = {}) {
-    // Reuse the SapienX session ID for Claude CLI continuity.
-    // This lets Claude remember previous messages in the conversation.
+    // Fresh UUID per invocation — avoids "session already in use" locks.
+    // Conversation context is included in the prompt itself via message buffer.
+    const cliSessionId = randomUUID();
     const args = [
       '-p', prompt,
-      '--session-id', sessionId,
+      '--session-id', cliSessionId,
       '--output-format', this.config.outputFormat || 'stream-json',
       '--verbose',
       '--dangerously-skip-permissions',

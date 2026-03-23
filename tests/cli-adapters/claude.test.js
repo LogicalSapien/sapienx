@@ -29,7 +29,7 @@ describe('ClaudeAdapter', () => {
     expect(args).toContain('-p');
     expect(args).toContain('--session-id');
     const sessionIdIndex = args.indexOf('--session-id') + 1;
-    expect(args[sessionIdIndex]).toBe('session-1');
+    expect(args[sessionIdIndex]).toMatch(/^[0-9a-f-]{36}$/);
     expect(args).toContain('--output-format');
     expect(args).toContain('stream-json');
     expect(args).toContain('--verbose');

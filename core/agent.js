@@ -299,8 +299,13 @@ export class Agent {
     const model = this._resolveModel(session, msg);
     const systemPrompt = this._buildSystemPrompt(session, msg);
 
+    // Build prompt with conversation history for context continuity
+    const history = this._getConversationHistory(msg.channel, msg.from);
+    const fullPrompt = history
+      ? `${systemPrompt}\n\n--- Conversation History ---\n${history}\n\nUser: ${msg.text}`
+      : `${systemPrompt}\n\nUser: ${msg.text}`;
+
     try {
-      const fullPrompt = `${systemPrompt}\n\nUser: ${msg.text}`;
       const result = await adapter.invoke(fullPrompt, session.sessionId, {
         model,
         onChunk: (chunk) => {
@@ -311,12 +316,14 @@ export class Agent {
         }
       });
       this._reply(msg, result);
+      // Store the exchange in history
+      this._addToHistory(msg.channel, msg.from, msg.text, result);
     } catch (err) {
       // Retry once
       try {
-        const fullPrompt = `${systemPrompt}\n\nUser: ${msg.text}`;
         const result = await adapter.invoke(fullPrompt, session.sessionId, { model });
         this._reply(msg, result);
+        this._addToHistory(msg.channel, msg.from, msg.text, result);
       } catch (retryErr) {
         this._reply(msg, `Error: ${retryErr.message}`);
         this.bus.emitError('agent', retryErr);
@@ -347,6 +354,32 @@ export class Agent {
     } finally {
       this._activeInvocations--;
     }
+  }
+
+  _getConversationHistory(channel, from) {
+    const key = `${channel}-${from}`;
+    const history = this._conversationHistory?.get(key);
+    if (!history || history.length === 0) return '';
+    // Include last 5 exchanges max to keep prompt size manageable
+    return history.slice(-5).map(h =>
+      `User: ${h.user}\nAssistant: ${h.assistant}`
+    ).join('\n\n');
+  }
+
+  _addToHistory(channel, from, userMsg, assistantMsg) {
+    if (!this._conversationHistory) this._conversationHistory = new Map();
+    const key = `${channel}-${from}`;
+    if (!this._conversationHistory.has(key)) {
+      this._conversationHistory.set(key, []);
+    }
+    const history = this._conversationHistory.get(key);
+    // Truncate assistant response for history (keep it brief)
+    const truncated = assistantMsg.length > 500
+      ? assistantMsg.substring(0, 500) + '...'
+      : assistantMsg;
+    history.push({ user: userMsg, assistant: truncated });
+    // Keep max 10 exchanges
+    if (history.length > 10) history.shift();
   }
 
   _buildSystemPrompt(session, msg) {
