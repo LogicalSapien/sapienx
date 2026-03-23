@@ -144,6 +144,63 @@ program
   });
 
 // sapienx configure
+async function connectWhatsApp() {
+  // Connect to WhatsApp, handle QR if needed. Returns { client, groups } or null.
+  const pkg = (await import('whatsapp-web.js')).default;
+  const { Client: WaClient, LocalAuth: WaLocalAuth } = pkg;
+  const qrcodeMod = (await import('qrcode-terminal')).default;
+
+  const client = new WaClient({
+    authStrategy: new WaLocalAuth({ dataPath: join(projectRoot, '.wwebjs_auth') }),
+    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+  });
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      console.log('\n  WhatsApp connection timed out.');
+      client.destroy().catch(() => {});
+      resolve(null);
+    }, 60000);
+
+    client.on('qr', (qr) => {
+      console.log('\n  Scan this QR code with your phone:');
+      console.log('  (WhatsApp > Settings > Linked Devices > Link a Device)\n');
+      qrcodeMod.generate(qr, { small: true });
+    });
+
+    client.on('ready', async () => {
+      clearTimeout(timeout);
+      console.log('  WhatsApp connected!');
+      try {
+        const chats = await client.getChats();
+        const groups = chats.filter(c => c.isGroup).map(c => ({
+          id: c.id._serialized,
+          name: c.name
+        }));
+        await client.destroy();
+        resolve({ groups });
+      } catch {
+        await client.destroy().catch(() => {});
+        resolve({ groups: [] });
+      }
+    });
+
+    // Handle the puppeteer navigation crash during QR scan
+    process.once('unhandledRejection', (err) => {
+      if (err?.message?.includes('Execution context was destroyed')) {
+        // Normal during QR scan — WhatsApp Web navigates after auth
+        // The client will emit 'ready' after reconnecting
+      }
+    });
+
+    client.initialize().catch((err) => {
+      clearTimeout(timeout);
+      console.log(`  WhatsApp init failed: ${err.message}`);
+      resolve(null);
+    });
+  });
+}
+
 async function runConfigure() {
   const inquirer = (await import('inquirer')).default;
 
@@ -193,8 +250,59 @@ async function runConfigure() {
 
   // 3. WhatsApp settings (only if WhatsApp selected)
   if (channels.includes('whatsapp')) {
-    console.log('\n--- WhatsApp Settings ---\n');
+    console.log('\n--- WhatsApp ---\n');
 
+    // Step 1: Ensure WhatsApp is connected
+    const waAuthPath = join(projectRoot, '.wwebjs_auth');
+    let waGroups = []; // fetched groups for later use
+
+    // Stop daemon if running (can't share session)
+    const pidPathWa = join(projectRoot, 'data', 'sapienx.pid');
+    if (existsSync(pidPathWa)) {
+      const pid = readFileSync(pidPathWa, 'utf-8').trim();
+      if (pid) {
+        try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
+        writeFileSync(pidPathWa, '');
+        await new Promise(r => setTimeout(r, 2000));
+        console.log('  Stopped running daemon.');
+      }
+    }
+
+    if (existsSync(waAuthPath)) {
+      console.log('  WhatsApp session found. Verifying connection...');
+      const result = await connectWhatsApp();
+      if (result) {
+        console.log(`  Found ${result.groups.length} group(s).`);
+        waGroups = result.groups;
+      } else {
+        console.log('  Could not verify connection.');
+        const resetAnswer = await inquirer.prompt([
+          { type: 'confirm', name: 'reset', message: 'Re-link WhatsApp? (scan new QR code)', default: true }
+        ]);
+        if (resetAnswer.reset) {
+          const { rmSync } = await import('node:fs');
+          rmSync(waAuthPath, { recursive: true });
+          console.log('  Session cleared. Scanning QR...');
+          const result2 = await connectWhatsApp();
+          if (result2) {
+            waGroups = result2.groups;
+          }
+        }
+      }
+    } else {
+      console.log('  WhatsApp not linked yet. Let\'s connect now.');
+      console.log('  A QR code will appear — scan it with your phone.\n');
+      const result = await connectWhatsApp();
+      if (result) {
+        console.log(`  Found ${result.groups.length} group(s).`);
+        waGroups = result.groups;
+      } else {
+        console.log('  WhatsApp connection failed. You can retry with: sapienx configure');
+      }
+    }
+
+    // Step 2: Phone and allowed numbers
+    console.log('');
     const waPhoneAnswers = await inquirer.prompt([
       {
         type: 'input',
@@ -211,8 +319,10 @@ async function runConfigure() {
         filter: (v) => v.replace(/\+/g, '').replace(/\s/g, '')
       }
     ]);
+    phone = waPhoneAnswers.phone;
+    allowedNumbers = waPhoneAnswers.allowedNumbers;
 
-    // Use rawlist (numbered) for better terminal compatibility
+    // Step 3: Group policy
     const groupPolicyAnswer = await inquirer.prompt([
       {
         type: 'rawlist',
@@ -226,87 +336,19 @@ async function runConfigure() {
         default: existing.GROUP_POLICY === 'allowlist' ? 1 : existing.GROUP_POLICY === 'all' ? 2 : 0
       }
     ]);
-
-    phone = waPhoneAnswers.phone;
-    allowedNumbers = waPhoneAnswers.allowedNumbers;
     groupPolicy = groupPolicyAnswer.groupPolicy;
 
+    // Step 4: Group selection (if allowlist and we have groups)
     if (groupPolicy === 'allowlist') {
-      // Try to fetch groups from WhatsApp if session exists
-      const waAuthPath2 = join(projectRoot, '.wwebjs_auth');
-      let fetchedGroups = [];
-
-      if (existsSync(waAuthPath2)) {
-        const fetchAnswer = await inquirer.prompt([
-          { type: 'confirm', name: 'fetch', message: 'Fetch your WhatsApp groups to select from?', default: true }
-        ]);
-
-        if (fetchAnswer.fetch) {
-          // Stop running daemon first — can't share WhatsApp session
-          const pidPath2 = join(projectRoot, 'data', 'sapienx.pid');
-          let stoppedDaemon = false;
-          if (existsSync(pidPath2)) {
-            const pid = readFileSync(pidPath2, 'utf-8').trim();
-            if (pid) {
-              try { process.kill(parseInt(pid), 'SIGTERM'); stoppedDaemon = true; } catch {}
-              writeFileSync(pidPath2, '');
-              await new Promise(r => setTimeout(r, 2000)); // wait for cleanup
-            }
-          }
-          if (stoppedDaemon) console.log('  Stopped daemon to access WhatsApp.');
-          console.log('  Connecting to WhatsApp to fetch groups...');
-          try {
-            const pkg = (await import('whatsapp-web.js')).default;
-            const { Client: WaClient, LocalAuth: WaLocalAuth } = pkg;
-            const tmpClient = new WaClient({
-              authStrategy: new WaLocalAuth(),
-              puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
-            });
-
-            fetchedGroups = await new Promise((resolve) => {
-              const timeout = setTimeout(() => { tmpClient.destroy().catch(() => {}); resolve([]); }, 30000);
-
-              tmpClient.on('ready', async () => {
-                try {
-                  const chats = await tmpClient.getChats();
-                  const groups = chats.filter(c => c.isGroup).map(c => ({
-                    id: c.id._serialized,
-                    name: c.name
-                  }));
-                  clearTimeout(timeout);
-                  await tmpClient.destroy();
-                  resolve(groups);
-                } catch {
-                  clearTimeout(timeout);
-                  await tmpClient.destroy().catch(() => {});
-                  resolve([]);
-                }
-              });
-
-              tmpClient.initialize().catch(() => { clearTimeout(timeout); resolve([]); });
-            });
-
-            if (fetchedGroups.length > 0) {
-              console.log(`  Found ${fetchedGroups.length} group(s).`);
-            } else {
-              console.log('  Could not fetch groups.');
-            }
-          } catch (err) {
-            console.log(`  Error fetching groups: ${err.message}`);
-          }
-        }
-      }
-
-      if (fetchedGroups.length > 0) {
-        // Show checkbox list of groups
+      if (waGroups.length > 0) {
         const previouslyAllowed = (existing.ALLOWED_GROUPS || '').split(',').filter(Boolean);
         const groupAnswer = await inquirer.prompt([
           {
             type: 'checkbox',
             name: 'allowedGroups',
             message: 'Select groups to respond in:',
-            choices: fetchedGroups.map(g => ({
-              name: `${g.name} (${g.id})`,
+            choices: waGroups.map(g => ({
+              name: `${g.name}`,
               value: g.id,
               checked: previouslyAllowed.includes(g.id)
             }))
@@ -315,39 +357,16 @@ async function runConfigure() {
         allowedGroups = groupAnswer.allowedGroups.join(',');
         console.log(`  Selected ${groupAnswer.allowedGroups.length} group(s).`);
       } else {
-        // Fallback to manual input
         const groupAnswer = await inquirer.prompt([
           {
             type: 'input',
             name: 'allowedGroups',
-            message: 'Allowed group IDs (comma-separated, use "sapienx groups" to find IDs):',
+            message: 'Allowed group IDs (comma-separated):',
             default: existing.ALLOWED_GROUPS || ''
           }
         ]);
         allowedGroups = groupAnswer.allowedGroups;
       }
-    }
-
-    // WhatsApp session management (at the end, clearly separated)
-    const waAuthPath = join(projectRoot, '.wwebjs_auth');
-    if (existsSync(waAuthPath)) {
-      console.log('\n  WhatsApp is linked and connected. No need to change this');
-      console.log('  unless WhatsApp stops working or you want to link a different phone.');
-      const waSessionAnswer = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'reset',
-          message: 'Re-link WhatsApp? (WARNING: will disconnect current session)',
-          default: false
-        }
-      ]);
-      if (waSessionAnswer.reset) {
-        const { rmSync } = await import('node:fs');
-        rmSync(waAuthPath, { recursive: true });
-        console.log('  WhatsApp session cleared.');
-      }
-    } else {
-      console.log('  WhatsApp: no session yet. QR code will show on start.');
     }
   }
 
