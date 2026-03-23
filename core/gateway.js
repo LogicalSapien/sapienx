@@ -56,6 +56,7 @@ export class Gateway {
     if (msg.metadata?.isGroup) {
       const groupId = msg.metadata.groupId;
       const policy = this.config.groupPolicy || 'ignore';
+      console.log(`[Gateway] Group: ${groupId} policy=${policy}`);
 
       if (policy === 'ignore') {
         return; // drop all group messages
