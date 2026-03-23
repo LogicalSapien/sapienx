@@ -80,22 +80,46 @@ program
         cwd: projectRoot
       });
     } catch {
-      console.log('pm2 not found. Starting directly...');
+      console.log('Starting SapienX daemon...');
       const logPath = join(projectRoot, 'data', 'sapienx.log');
-      const logFd = (await import('node:fs')).openSync(logPath, 'a');
+      // Clear old log for fresh start
+      writeFileSync(logPath, '');
+      const fs = await import('node:fs');
+      const logFd = fs.openSync(logPath, 'a');
       const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
         stdio: ['ignore', logFd, logFd],
         cwd: projectRoot,
         detached: true
       });
       child.unref();
-      // Save PID for stop command
       writeFileSync(join(projectRoot, 'data', 'sapienx.pid'), String(child.pid));
-      console.log(`SapienX daemon started (PID: ${child.pid}).`);
-      console.log(`Logs: ${logPath}`);
-      console.log('Use "sapienx tui" for interactive mode.');
-      console.log('Use "sapienx status" to check status.');
-      console.log('Use "sapienx stop" to stop the daemon.');
+
+      // Wait for WhatsApp to connect (poll log file)
+      console.log(`Daemon started (PID: ${child.pid}). Waiting for WhatsApp...`);
+      let connected = false;
+      for (let i = 0; i < 30; i++) { // 30 seconds max
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const log = readFileSync(logPath, 'utf-8');
+          if (log.includes('[WhatsApp] Connected and ready.')) {
+            connected = true;
+            break;
+          }
+          if (log.includes('[WhatsApp] Scan this QR code')) {
+            console.log('WhatsApp needs QR scan. Run: sapienx configure');
+            break;
+          }
+        } catch {}
+        if (i % 5 === 4) process.stdout.write('.');
+      }
+      if (connected) {
+        console.log('\nSapienX is running. WhatsApp connected.');
+      } else if (!connected) {
+        console.log('\nDaemon started but WhatsApp may not be ready yet.');
+      }
+      console.log(`Logs: sapienx logs`);
+      console.log('TUI:  sapienx tui');
+      console.log('Stop: sapienx stop');
     }
   });
 
@@ -313,33 +337,79 @@ program
       }
     }
 
-    // Offer to start
+    // Check if WhatsApp needs QR scan
+    const waAuthExists = existsSync(join(projectRoot, '.wwebjs_auth'));
+
     const rl2 = createInterface({ input: process.stdin, output: process.stdout });
-    const startChoice = await new Promise(resolve =>
-      rl2.question('Start SapienX now? (tui/daemon/no) [tui]: ', resolve)
-    );
+    const startChoice = await new Promise(resolve => {
+      if (!waAuthExists) {
+        // No WhatsApp session — need foreground for QR scan
+        rl2.question('Start SapienX now? (yes/no) [yes]: ', resolve);
+      } else {
+        // WhatsApp session exists — can start in background
+        rl2.question('Start SapienX in background? (yes/no) [yes]: ', resolve);
+      }
+    });
     rl2.close();
 
-    const choice = startChoice.trim().toLowerCase() || 'tui';
-    if (choice === 'tui' || choice === 't') {
-      console.log('\nStarting TUI...\n');
-      const child = spawn('node', [join(projectRoot, 'index.js'), '--tui-only'], {
-        stdio: 'inherit',
-        cwd: projectRoot
-      });
-      child.on('exit', (code) => process.exit(code));
-    } else if (choice === 'daemon' || choice === 'd') {
-      console.log('\nStarting daemon (WhatsApp)...\n');
-      // Run in foreground so user can see QR code
-      const child = spawn('node', [join(projectRoot, 'index.js')], {
-        stdio: 'inherit',
-        cwd: projectRoot
-      });
-      child.on('exit', (code) => process.exit(code));
+    const choice = (startChoice.trim().toLowerCase() || 'yes');
+    if (choice === 'yes' || choice === 'y') {
+      if (!waAuthExists) {
+        // Need foreground for QR scan
+        console.log('\nStarting SapienX (foreground for QR scan)...');
+        console.log('Scan the QR code, then press Ctrl+C and run: sapienx start\n');
+        const child = spawn('node', [join(projectRoot, 'index.js')], {
+          stdio: 'inherit',
+          cwd: projectRoot
+        });
+        child.on('exit', (code) => process.exit(code));
+      } else {
+        // Start as background daemon
+        console.log('\nStarting SapienX daemon...');
+        const logPath = join(projectRoot, 'data', 'sapienx.log');
+        writeFileSync(logPath, '');
+        const fs = await import('node:fs');
+        const logFd = fs.openSync(logPath, 'a');
+        const child = spawn('node', [join(projectRoot, 'index.js'), '--daemon'], {
+          stdio: ['ignore', logFd, logFd],
+          cwd: projectRoot,
+          detached: true
+        });
+        child.unref();
+        writeFileSync(join(projectRoot, 'data', 'sapienx.pid'), String(child.pid));
+
+        // Wait for WhatsApp connection
+        process.stdout.write(`Waiting for WhatsApp`);
+        let connected = false;
+        for (let i = 0; i < 30; i++) {
+          await new Promise(r => setTimeout(r, 1000));
+          try {
+            const log = readFileSync(logPath, 'utf-8');
+            if (log.includes('[WhatsApp] Connected and ready.')) {
+              connected = true;
+              break;
+            }
+          } catch {}
+          if (i % 3 === 2) process.stdout.write('.');
+        }
+
+        if (connected) {
+          console.log(' connected!');
+          console.log(`\nSapienX is running in background (PID: ${child.pid}).`);
+          console.log('WhatsApp is connected and ready to receive messages.');
+        } else {
+          console.log(' timeout.');
+          console.log(`\nDaemon started (PID: ${child.pid}) but WhatsApp may still be connecting.`);
+        }
+        console.log('\nCommands:');
+        console.log('  sapienx status   — check status');
+        console.log('  sapienx logs     — view logs');
+        console.log('  sapienx tui      — interactive chat');
+        console.log('  sapienx stop     — stop daemon');
+        console.log('');
+      }
     } else {
-      console.log('\nNot starting. You can run:');
-      console.log('  sapienx tui      — interactive terminal chat');
-      console.log('  sapienx start    — start daemon (WhatsApp)');
+      console.log('\nNot starting. Run: sapienx start');
       console.log('');
     }
   });
