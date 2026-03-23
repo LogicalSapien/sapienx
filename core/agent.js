@@ -1,21 +1,19 @@
 import { v4 as uuidv4 } from 'uuid';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import paths from '../config/paths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const projectRoot = join(__dirname, '..');
 
 export class Agent {
   constructor(bus, config, { sessionManager, skillLoader, cliAdapters, gateway, scheduler }) {
     this.bus = bus;
     this.config = config;
 
-    // Load SAPIENX.md reference doc for system prompt
-    try {
-      this._referenceDoc = readFileSync(join(__dirname, '..', 'SAPIENX.md'), 'utf-8');
-    } catch {
-      this._referenceDoc = '';
-    }
+    // Load identity files from ~/.sapienx/ (copy defaults if missing)
+    this._loadIdentityFiles();
     this.sessionManager = sessionManager;
     this.skillLoader = skillLoader;
     this.cliAdapters = cliAdapters;
@@ -411,6 +409,29 @@ export class Agent {
     if (history.length > 10) history.shift();
   }
 
+  _loadIdentityFiles() {
+    const defaultsDir = join(projectRoot, 'defaults');
+
+    // Copy defaults to ~/.sapienx/ if missing
+    for (const file of ['SOUL.md', 'IDENTITY.md', 'USER.md']) {
+      const target = join(paths.home, file);
+      const source = join(defaultsDir, file);
+      if (!existsSync(target) && existsSync(source)) {
+        copyFileSync(source, target);
+        console.log(`[Agent] Created ${target} from defaults`);
+      }
+    }
+
+    // Load files (graceful fallback to empty)
+    const load = (filePath) => {
+      try { return readFileSync(filePath, 'utf-8'); } catch { return ''; }
+    };
+
+    this._soul = load(paths.soul);
+    this._identity = load(paths.identity);
+    this._user = load(paths.user);
+  }
+
   _buildSystemPrompt(session, msg) {
     const skills = this.skillLoader.getSkillSummaries();
     const skillList = skills.map(s => `- ${s.name}: ${s.description} (triggers: ${s.triggers.join(', ')})`).join('\n');
@@ -419,67 +440,23 @@ export class Agent {
     const channel = msg?.channel || session.channel || 'unknown';
 
     return [
-      `You are SapienX, a personal AI assistant for ${ownerName}.`,
-      `You are running on ${ownerName}'s system with FULL access to the operating system.`,
-      `The user is messaging you via the ${channel.toUpperCase()} channel.`,
-      channel === 'tui' ? 'They are using the terminal/TUI interface directly.' : '',
-      channel === 'whatsapp' ? 'They are messaging you via WhatsApp.' : '',
+      // Identity layer
+      this._identity,
+      `You are a personal AI assistant for ${ownerName}.`,
+      `Running on ${ownerName}'s system. Channel: ${channel.toUpperCase()}.`,
       '',
-      'CAPABILITIES:',
-      '- You have full Bash/shell access. You can run any command on this system.',
-      '- You can read, write, and edit files anywhere on the filesystem.',
-      '- You can browse the web (WebSearch, WebFetch).',
-      '- You can install packages, manage services, check logs, deploy code.',
-      '- You can do multi-step agentic tasks: research, code, test, deploy.',
-      '- You run with --dangerously-skip-permissions so no tool requires approval.',
+      // Soul layer (capabilities, behavior, scheduling)
+      this._soul,
       '',
-      'BEHAVIOR:',
-      '- Execute commands and tasks directly. Don\'t just suggest — DO it.',
-      '- If the user asks to check something, run the actual command and report results.',
-      '- If the user asks to fix something, make the fix and confirm it\'s done.',
-      '- For WhatsApp: keep responses concise. Show key output, not full dumps.',
-      '- For TUI: you can be more detailed.',
-      '',
-      'SCHEDULING & REMINDERS:',
-      'You can execute SapienX commands by embedding them in your response using {{command}} syntax.',
-      'SapienX extracts and executes them automatically. You can embed MULTIPLE commands in one response.',
-      '',
-      'Time formats:',
-      '- {{/remind in 5m "message"}} — relative (m=minutes, h=hours, d=days)',
-      '- {{/remind at 14:30 "message"}} — specific time today (24h), or tomorrow if past',
-      '- {{/remind at 2:30pm "message"}} — with am/pm',
-      '- {{/remind tomorrow at 9:00 "message"}} — tomorrow at specific time',
-      '- {{/cron "0 9 * * 1-5" command}} — recurring cron schedule',
-      '',
-      'REMINDER TYPES:',
-      '- Simple: {{/remind in 5m "Take out bins"}} — sends text, no AI processing',
-      '- AI-powered: {{/remind in 5m "ai: Set another reminder for 10 mins to check deploy"}}',
-      '  When the message starts with "ai:", it triggers a FULL Claude CLI call when the reminder fires.',
-      '  Claude then processes the prompt and can set new reminders, run commands, check things, etc.',
-      '  This is how you chain reminders — the first reminder triggers Claude, which sets the next one.',
-      '',
-      'IMPORTANT RULES:',
-      '- You CAN set multiple reminders in one response. Use separate {{}} for each.',
-      '- For simple chains where timing is known upfront, set both at once:',
-      '  {{/remind in 5m "Do X"}} {{/remind in 15m "Do Y"}}',
-      '- For dynamic chains where the next step depends on context, use ai: prefix:',
-      '  {{/remind in 5m "ai: Check if the deploy succeeded. If not, set a 10m retry reminder."}}',
-      '- Use "ai:" when the reminder needs intelligence: checking status, making decisions, running commands.',
-      '- Use plain text when it\'s just a notification: "Take out bins", "Call Bob".',
-      '- NEVER tell the user to set a reminder themselves. YOU set it using {{}} syntax.',
-      '- Always confirm what you\'ve scheduled in plain text.',
-      '',
-      'Example — user says "in 5 mins check if nginx is running, if not restart it and check again in 2 mins":',
-      'On it! {{/remind in 5m "ai: Check if nginx is running with systemctl status nginx. If it is down, restart it and set a follow-up check in 2 minutes."}}',
-      '',
+      // Dynamic context
       'Available skills (fast-path, no AI needed):',
       skillList,
       '',
       summary ? `Previous conversation was about: ${summary}` : '',
       '',
-      this._referenceDoc ? '--- SapienX Reference Documentation ---' : '',
-      this._referenceDoc ? 'Use this to answer any questions about SapienX usage, configuration, commands, architecture, or troubleshooting.' : '',
-      this._referenceDoc || ''
+      // User layer
+      this._user ? '--- User Profile ---' : '',
+      this._user || ''
     ].filter(Boolean).join('\n');
   }
 

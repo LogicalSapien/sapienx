@@ -8,6 +8,7 @@ import { Scheduler } from './core/scheduler.js';
 import { SkillLoader } from './skills/loader.js';
 import { ClaudeAdapter } from './cli-adapters/claude.js';
 import { TuiChannel } from './channels/tui.js';
+import { DeliveryQueue } from './core/delivery-queue.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -55,6 +56,9 @@ async function main() {
   // 6. Gateway
   const gateway = new Gateway(bus, config);
 
+  // 6.5. Delivery queue (intercepts message:outgoing, retries on failure)
+  const deliveryQueue = new DeliveryQueue(bus);
+
   // 7. Scheduler
   const scheduler = new Scheduler(bus, config.scheduler);
 
@@ -74,6 +78,7 @@ async function main() {
     const tui = new TuiChannel(bus, config.channels.tui);
     await tui.start();
     channels.push(tui);
+    deliveryQueue.registerChannel('tui', tui);
   }
 
   if (!tuiOnly && config.channels.whatsapp.enabled) {
@@ -82,6 +87,7 @@ async function main() {
       const wa = new WhatsAppChannel(bus, config.channels.whatsapp);
       await wa.start();
       channels.push(wa);
+      deliveryQueue.registerChannel('whatsapp', wa);
     } catch (err) {
       console.error('Failed to start WhatsApp:', err.message);
     }
@@ -91,6 +97,7 @@ async function main() {
   const shutdown = async () => {
     console.log('\nShutting down SapienX...');
     scheduler.stopAll();
+    deliveryQueue.stopAll();
     for (const ch of channels) await ch.stop();
     sessionManager.destroy();
     process.exit(0);

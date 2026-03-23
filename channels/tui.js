@@ -16,12 +16,6 @@ export class TuiChannel extends BaseChannel {
       prompt: '\n\x1b[36msapienx>\x1b[0m '
     });
 
-    this.bus.on('message:outgoing', (msg) => {
-      if (msg.channel === 'tui') {
-        this._display(msg.text);
-      }
-    });
-
     this.bus.on('message:status', (msg) => {
       if (msg.channel === 'tui') {
         process.stdout.write(`\r\x1b[33m${msg.text}\x1b[0m`);
@@ -68,6 +62,10 @@ export class TuiChannel extends BaseChannel {
 
   async send(message) {
     this._display(message.text);
+  }
+
+  isConnected() {
+    return !!this.rl;
   }
 
   _display(text) {

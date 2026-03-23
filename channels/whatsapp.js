@@ -42,12 +42,6 @@ export class WhatsAppChannel extends BaseChannel {
 
     this._attachMessageListener();
 
-    this.bus.on('message:outgoing', async (msg) => {
-      if (msg.channel === 'whatsapp') {
-        await this.send(msg);
-      }
-    });
-
     // Initialize with retry — puppeteer can crash during QR scan navigation
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
@@ -156,30 +150,24 @@ export class WhatsAppChannel extends BaseChannel {
 
   async send(message) {
     if (!this.client || !this.ready) {
-      console.error('[WhatsApp] Cannot send — not connected');
-      return;
+      throw new Error('WhatsApp not connected');
     }
 
     const to = message.to || message.metadata?.chatId;
     if (!to) {
-      console.error('[WhatsApp] Cannot send — no recipient');
-      return;
+      throw new Error('No recipient specified');
     }
 
     const chatId = to.includes('@') ? to : `${to}@c.us`;
     const formatted = toWhatsApp(message.text);
-    try {
-      const sent = await this.client.sendMessage(chatId, formatted);
-      // Track sent IDs so we don't process our own responses
-      if (sent?.id?._serialized) this._sentIds.add(sent.id._serialized);
-      if (this._sentIds.size > 500) {
-        const arr = [...this._sentIds];
-        this._sentIds = new Set(arr.slice(-250));
-      }
-      console.log(`[WhatsApp] Sent reply to ${chatId}`);
-    } catch (err) {
-      console.error(`[WhatsApp] Failed to send: ${err.message}`);
+    const sent = await this.client.sendMessage(chatId, formatted);
+    // Track sent IDs so we don't process our own responses
+    if (sent?.id?._serialized) this._sentIds.add(sent.id._serialized);
+    if (this._sentIds.size > 500) {
+      const arr = [...this._sentIds];
+      this._sentIds = new Set(arr.slice(-250));
     }
+    console.log(`[WhatsApp] Sent reply to ${chatId}`);
   }
 
   isConnected() {
