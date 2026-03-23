@@ -294,53 +294,71 @@ export class Agent {
       });
     }
 
+    // Send typing indicator
+    this._sendTyping(msg);
+
     this._activeInvocations++;
     const model = this._resolveModel(session, msg);
     const systemPrompt = this._buildSystemPrompt(session, msg);
 
-    // Build prompt with conversation history for context continuity
     const history = this._getConversationHistory(msg.channel, msg.from);
     const fullPrompt = history
       ? `${systemPrompt}\n\n--- Conversation History ---\n${history}\n\nUser: ${msg.text}`
       : `${systemPrompt}\n\nUser: ${msg.text}`;
 
+    // Keep typing indicator alive while Claude is thinking
+    const typingInterval = setInterval(() => this._sendTyping(msg), 5000);
+    let replied = false;
+
     try {
       let result = await adapter.invoke(fullPrompt, session.sessionId, {
         model,
-        onChunk: (chunk) => {
-          this.bus.emit('message:status', {
-            channel: msg.channel,
-            text: 'typing...'
-          });
-        }
+        onChunk: () => this._sendTyping(msg)
       });
-      // Extract and execute any embedded commands like {{/remind in 2m "go out"}}
       result = await this._extractAndExecuteCommands(result, msg, session);
       this._reply(msg, result);
       this._addToHistory(msg.channel, msg.from, msg.text, result);
+      replied = true;
     } catch (err) {
       if (err.isAuthError) {
         console.error('[Agent] Claude auth error — login needed');
-        this._reply(msg, '⚠️ Claude CLI session expired. Please SSH into the server and run: claude login');
-        this.bus.emitError('agent', err);
-        return;
-      }
-      // Retry once for non-auth errors
-      try {
-        let result = await adapter.invoke(fullPrompt, session.sessionId, { model });
-        result = await this._extractAndExecuteCommands(result, msg, session);
-        this._reply(msg, result);
-        this._addToHistory(msg.channel, msg.from, msg.text, result);
-      } catch (retryErr) {
-        if (retryErr.isAuthError) {
-          this._reply(msg, '⚠️ Claude CLI session expired. Please SSH into the server and run: claude login');
-        } else {
-          this._reply(msg, `Error: ${retryErr.message}`);
+        this._reply(msg, '⚠️ Claude CLI session expired. SSH into the server and run: claude login');
+        replied = true;
+      } else {
+        // Retry once for non-auth errors
+        try {
+          let result = await adapter.invoke(fullPrompt, session.sessionId, { model });
+          result = await this._extractAndExecuteCommands(result, msg, session);
+          this._reply(msg, result);
+          this._addToHistory(msg.channel, msg.from, msg.text, result);
+          replied = true;
+        } catch (retryErr) {
+          if (retryErr.isAuthError) {
+            this._reply(msg, '⚠️ Claude CLI session expired. SSH into the server and run: claude login');
+          } else if (retryErr.message?.includes('timed out')) {
+            this._reply(msg, '⏱️ Request timed out. Try a simpler question or try again.');
+          } else {
+            this._reply(msg, `Something went wrong: ${retryErr.message?.substring(0, 200)}`);
+          }
+          replied = true;
         }
-        this.bus.emitError('agent', retryErr);
       }
+      this.bus.emitError('agent', err);
     } finally {
+      clearInterval(typingInterval);
       this._activeInvocations--;
+      // Safety net — always send something back
+      if (!replied) {
+        this._reply(msg, 'Something went wrong processing your message. Please try again.');
+      }
+    }
+  }
+
+  _sendTyping(msg) {
+    if (msg.metadata?.rawMsg) {
+      msg.metadata.rawMsg.getChat?.().then(chat => {
+        chat?.sendStateTyping?.().catch(() => {});
+      }).catch(() => {});
     }
   }
 
