@@ -117,12 +117,23 @@ program
 program
   .command('restart')
   .description('Restart SapienX daemon')
-  .action(() => {
-    try {
-      execSync('pm2 restart sapienx', { stdio: 'inherit' });
-    } catch {
-      console.log('pm2 not available. Stop and start manually.');
+  .action(async () => {
+    // Stop
+    const pidPath = join(projectRoot, 'data', 'sapienx.pid');
+    if (existsSync(pidPath)) {
+      const pid = readFileSync(pidPath, 'utf-8').trim();
+      if (pid) {
+        try { process.kill(parseInt(pid), 'SIGTERM'); } catch {}
+        writeFileSync(pidPath, '');
+        console.log(`Stopped (PID: ${pid}).`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
+    // Start (reuse start logic)
+    execSync(`node ${join(projectRoot, 'bin', 'sapienx')} start`, {
+      stdio: 'inherit',
+      cwd: projectRoot
+    });
   });
 
 // sapienx tui
