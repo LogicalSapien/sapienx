@@ -1,50 +1,75 @@
 # SapienX
 
-Personal multi-agent AI assistant framework. Receive messages via WhatsApp or terminal, route to Claude Code CLI running as a full agent with unrestricted OS access.
+Personal AI assistant framework. WhatsApp + terminal interface powered by Claude Code CLI with full OS access.
 
-## One-Line Install
+## Features
+
+- **WhatsApp & TUI** — receive messages, respond via Claude Code CLI
+- **Voice messages** — auto-transcribed via OpenAI Whisper
+- **Image processing** — Claude reads images natively
+- **Smart scheduling** — reminders, cron jobs, AI-powered chaining
+- **Heartbeat** — proactive checks (email, calendar, weather)
+- **Group chat intelligence** — knows when to speak vs stay silent
+- **Delivery queue** — retry with exponential backoff, dead letter log
+- **Persistent memory** — daily logs, long-term memory, domain state files
+- **Identity files** — editable SOUL.md, IDENTITY.md, USER.md (no hardcoded prompts)
+- **Auth monitoring** — alerts on WhatsApp when Claude CLI auth expires
+- **CLI messaging** — `sapienx message "text"` sends via running daemon
+
+## Quick Start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/LogicalSapien/sapienx/main/scripts/setup.sh | bash
-```
-
-This installs Node.js, Claude CLI, pm2, clones the repo, and runs interactive setup.
-
-## Manual Install
-
-```bash
-git clone https://github.com/LogicalSapien/sapienx.git
-cd sapienx
-npm install
-npm link
-sapienx configure    # Interactive setup — name, WhatsApp QR, API keys
-sapienx start        # Start daemon in background
+cd ~/sapienx && sapienx configure
+sapienx start
 ```
 
 ## Commands
 
 ```bash
-sapienx configure    # Setup / reconfigure
-sapienx start        # Start background daemon (WhatsApp)
-sapienx stop         # Stop daemon
-sapienx restart      # Restart daemon
-sapienx tui          # Interactive terminal chat
-sapienx status       # Check status
-sapienx logs         # View logs (-f to follow)
-sapienx version      # Version info
-sapienx upgrade      # Pull latest + restart
+sapienx start          # Start background daemon (WhatsApp)
+sapienx stop           # Stop daemon
+sapienx restart        # Restart
+sapienx tui            # Interactive terminal chat
+sapienx configure      # Setup / reconfigure
+sapienx status         # Check status
+sapienx logs -f        # Follow logs
+sapienx message "hi"   # Send message via daemon
+sapienx upgrade        # Pull latest + restart
 ```
 
-## What Can It Do?
+## In-Chat Commands
 
-Send a message via WhatsApp or TUI — Claude executes it with full system access:
+```
+/remind in 5m "call Bob"       — Set reminder
+/remind at 14:30 "meeting"     — Remind at time
+/cron "0 9 * * 1-5" command    — Recurring task
+/heartbeat start               — Proactive checks (hourly)
+/task list                     — View scheduled tasks
+/new                           — Fresh session
+/help                          — All commands
+```
 
-- "check disk space" → runs `df -h`, reports results
-- "restart nginx" → runs `systemctl restart nginx`
-- "what's using port 3000?" → runs `lsof -i :3000`
-- "search for flights to Barcelona" → browses the web
-- "create a backup of /etc/nginx" → creates the backup
+Or just ask naturally — "remind me in 10 mins to check the deploy" — Claude handles it.
+
+## Data Layout
+
+```
+~/sapienx/           ← code (safe to git pull)
+~/.sapienx/          ← user data & config
+├── .env             ← owner, API keys, channels
+├── SOUL.md          ← AI behavior & rules
+├── IDENTITY.md      ← AI personality
+├── USER.md          ← owner profile
+├── HEARTBEAT.md     ← proactive check list
+├── memory/          ← persistent memory
+└── data/            ← sessions, logs, queue
+```
 
 ## Documentation
 
-See [SAPIENX.md](SAPIENX.md) for full reference.
+See [SAPIENX.md](SAPIENX.md) for the complete reference guide.
+
+## License
+
+MIT
