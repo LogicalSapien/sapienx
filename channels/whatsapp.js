@@ -111,10 +111,19 @@ export class WhatsAppChannel extends BaseChannel {
   async _handleIncoming(msg) {
     const chat = await msg.getChat();
     const isGroup = chat.isGroup;
-    const from = msg.from.replace('@c.us', '').replace('@g.us', '');
+    const from = msg.from.replace(/@(c\.us|g\.us|lid)$/, '');
     const senderId = isGroup
-      ? msg.author?.replace('@c.us', '') || from
+      ? msg.author?.replace(/@(c\.us|lid)$/, '') || from
       : from;
+
+    // Resolve phone number from contact (needed for LID format)
+    let senderPhone = senderId;
+    try {
+      const contact = await msg.getContact();
+      if (contact?.number) {
+        senderPhone = contact.number.replace(/^\+/, '');
+      }
+    } catch {}
 
     // Detect self-chat
     const isSelfChat = !isGroup && chat.id._serialized === msg.from;
@@ -122,7 +131,7 @@ export class WhatsAppChannel extends BaseChannel {
     this.bus.emit('message:incoming', {
       id: msg.id._serialized,
       channel: 'whatsapp',
-      from: senderId,
+      from: senderPhone,
       text: msg.body,
       timestamp: msg.timestamp * 1000,
       metadata: {
@@ -130,6 +139,7 @@ export class WhatsAppChannel extends BaseChannel {
         isSelfChat,
         groupId: isGroup ? msg.from : null,
         chatId: msg.from,
+        senderId: senderId,
         rawMsg: msg
       }
     });
