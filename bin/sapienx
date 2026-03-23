@@ -145,58 +145,50 @@ program
 
 // sapienx configure
 async function connectWhatsApp() {
-  // Connect to WhatsApp, handle QR if needed. Returns { client, groups } or null.
-  const pkg = (await import('whatsapp-web.js')).default;
-  const { Client: WaClient, LocalAuth: WaLocalAuth } = pkg;
-  const qrcodeMod = (await import('qrcode-terminal')).default;
-
-  const client = new WaClient({
-    authStrategy: new WaLocalAuth({ dataPath: join(projectRoot, '.wwebjs_auth') }),
-    puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
-  });
-
+  // Run WhatsApp connection in a subprocess to isolate puppeteer crashes.
+  // The subprocess outputs JSON to stdout, QR code to stderr.
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      console.log('\n  WhatsApp connection timed out.');
-      client.destroy().catch(() => {});
-      resolve(null);
-    }, 60000);
-
-    client.on('qr', (qr) => {
-      console.log('\n  Scan this QR code with your phone:');
-      console.log('  (WhatsApp > Settings > Linked Devices > Link a Device)\n');
-      qrcodeMod.generate(qr, { small: true });
+    const child = spawn('node', [join(projectRoot, 'scripts', 'wa-connect.js')], {
+      stdio: ['ignore', 'pipe', 'inherit'], // stderr=inherit shows QR in terminal
+      cwd: projectRoot
     });
 
-    client.on('ready', async () => {
-      clearTimeout(timeout);
-      console.log('  WhatsApp connected!');
+    let output = '';
+    child.stdout.on('data', (data) => { output += data.toString(); });
+
+    child.on('close', (code) => {
+      // Parse the last JSON line from stdout
+      const lines = output.trim().split('\n').filter(Boolean);
+      const lastLine = lines[lines.length - 1];
       try {
-        const chats = await client.getChats();
-        const groups = chats.filter(c => c.isGroup).map(c => ({
-          id: c.id._serialized,
-          name: c.name
-        }));
-        await client.destroy();
-        resolve({ groups });
+        const result = JSON.parse(lastLine);
+        if (result.status === 'connected') {
+          resolve({ groups: result.groups });
+        } else if (result.status === 'qr_scanned_restart_needed') {
+          // QR was scanned but puppeteer crashed — session is saved, retry once
+          console.log('  QR scanned. Verifying connection...');
+          const retry = spawn('node', [join(projectRoot, 'scripts', 'wa-connect.js')], {
+            stdio: ['ignore', 'pipe', 'inherit'],
+            cwd: projectRoot
+          });
+          let retryOutput = '';
+          retry.stdout.on('data', (d) => { retryOutput += d.toString(); });
+          retry.on('close', () => {
+            try {
+              const retryResult = JSON.parse(retryOutput.trim().split('\n').pop());
+              if (retryResult.status === 'connected') {
+                resolve({ groups: retryResult.groups });
+              } else {
+                resolve(null);
+              }
+            } catch { resolve(null); }
+          });
+        } else {
+          resolve(null);
+        }
       } catch {
-        await client.destroy().catch(() => {});
-        resolve({ groups: [] });
+        resolve(null);
       }
-    });
-
-    // Handle the puppeteer navigation crash during QR scan
-    process.once('unhandledRejection', (err) => {
-      if (err?.message?.includes('Execution context was destroyed')) {
-        // Normal during QR scan — WhatsApp Web navigates after auth
-        // The client will emit 'ready' after reconnecting
-      }
-    });
-
-    client.initialize().catch((err) => {
-      clearTimeout(timeout);
-      console.log(`  WhatsApp init failed: ${err.message}`);
-      resolve(null);
     });
   });
 }
