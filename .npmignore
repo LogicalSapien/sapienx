@@ -1,0 +1,14 @@
+tests/
+.wwebjs_auth/
+.wwebjs_cache/
+data/sessions.json
+data/schedules.json
+data/session-history/
+data/sapienx.pid
+data/sapienx.log
+.env
+.sapienx-ready
+*.log
+.DS_Store
+.github/
+TODO.md
