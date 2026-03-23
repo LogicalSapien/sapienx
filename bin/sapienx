@@ -195,7 +195,7 @@ async function runConfigure() {
   if (channels.includes('whatsapp')) {
     console.log('\n--- WhatsApp Settings ---\n');
 
-    const waAnswers = await inquirer.prompt([
+    const waPhoneAnswers = await inquirer.prompt([
       {
         type: 'input',
         name: 'phone',
@@ -209,7 +209,11 @@ async function runConfigure() {
         message: 'Additional allowed numbers (comma-separated, blank for owner only):',
         default: existing.ALLOWED_NUMBERS || '',
         filter: (v) => v.replace(/\+/g, '').replace(/\s/g, '')
-      },
+      }
+    ]);
+
+    // Separate prompt for list type (renders better)
+    const groupPolicyAnswer = await inquirer.prompt([
       {
         type: 'list',
         name: 'groupPolicy',
@@ -223,9 +227,9 @@ async function runConfigure() {
       }
     ]);
 
-    phone = waAnswers.phone;
-    allowedNumbers = waAnswers.allowedNumbers;
-    groupPolicy = waAnswers.groupPolicy;
+    phone = waPhoneAnswers.phone;
+    allowedNumbers = waPhoneAnswers.allowedNumbers;
+    groupPolicy = groupPolicyAnswer.groupPolicy;
 
     if (groupPolicy === 'allowlist') {
       // Try to fetch groups from WhatsApp if session exists
