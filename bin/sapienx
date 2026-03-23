@@ -195,7 +195,8 @@ program
     // 1. Owner info
     console.log('1. Owner Settings\n');
     const name = await askWithDefault('  Your name', 'OWNER_NAME');
-    const phone = await askWithDefault('  WhatsApp phone (country code, no +)', 'OWNER_PHONE');
+    let phone = await askWithDefault('  WhatsApp phone (country code, no +)', 'OWNER_PHONE');
+    phone = phone.replace(/^\+/, '').replace(/\s/g, ''); // strip + and spaces
 
     // 2. API keys
     console.log('\n2. API Keys\n');
