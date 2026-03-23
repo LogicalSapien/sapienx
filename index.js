@@ -11,6 +11,7 @@ import { TuiChannel } from './channels/tui.js';
 import { DeliveryQueue } from './core/delivery-queue.js';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -93,9 +94,36 @@ async function main() {
     }
   }
 
-  // 10. Graceful shutdown
+  // 10. Outbox watcher — picks up messages from `sapienx message` CLI
+  const outboxDir = join(paths.data, 'outbox');
+  const { mkdirSync: mkdirS, readdirSync, unlinkSync } = await import('node:fs');
+  mkdirS(outboxDir, { recursive: true });
+
+  const pollOutbox = () => {
+    try {
+      const files = readdirSync(outboxDir).filter(f => f.endsWith('.json'));
+      for (const file of files) {
+        try {
+          const filePath = join(outboxDir, file);
+          const msg = JSON.parse(readFileSync(filePath, 'utf-8'));
+          bus.emit('message:outgoing', msg);
+          unlinkSync(filePath);
+          console.log(`[Outbox] Sent queued message: ${msg.id}`);
+        } catch (err) {
+          console.error(`[Outbox] Failed to process ${file}: ${err.message}`);
+        }
+      }
+    } catch {}
+  };
+
+  // Poll every 2 seconds
+  const outboxTimer = setInterval(pollOutbox, 2000);
+  pollOutbox(); // Check immediately
+
+  // 11. Graceful shutdown
   const shutdown = async () => {
     console.log('\nShutting down SapienX...');
+    clearInterval(outboxTimer);
     scheduler.stopAll();
     deliveryQueue.stopAll();
     for (const ch of channels) await ch.stop();

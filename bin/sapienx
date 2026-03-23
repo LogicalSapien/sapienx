@@ -648,39 +648,58 @@ program
 program
   .command('message <text>')
   .description('Send a message via a channel')
-  .requiredOption('--channel <channel>', 'Channel to send through')
-  .requiredOption('--to <recipient>', 'Recipient ID')
+  .option('--channel <channel>', 'Channel to send through', 'whatsapp')
+  .option('--to <recipient>', 'Recipient ID (default: owner phone)')
   .action(async (text, opts) => {
-    // Import and boot just enough to send one message
+    // Queue the message for the running daemon via a drop file
+    const msgId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const dropDir = join(paths.data, 'outbox');
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(dropDir, { recursive: true });
+
+    // Resolve recipient
     const { default: config } = await import(join(projectRoot, 'config', 'sapienx.config.js'));
-    const { createBus } = await import(join(projectRoot, 'core', 'bus.js'));
-    const bus = createBus();
-
-    if (opts.channel === 'whatsapp') {
-      const { WhatsAppChannel } = await import(join(projectRoot, 'channels', 'whatsapp.js'));
-      const wa = new WhatsAppChannel(bus, config.channels.whatsapp);
-
-      bus.on('channel:ready', async () => {
-        await wa.send({
-          to: opts.to,
-          text,
-          metadata: {}
-        });
-        console.log(`Message sent to ${opts.to} via WhatsApp.`);
-        await wa.stop();
-        process.exit(0);
-      });
-
-      await wa.start();
-
-      // Timeout after 30s
-      setTimeout(() => {
-        console.error('Timeout waiting for WhatsApp connection.');
-        process.exit(1);
-      }, 30000);
-    } else {
-      console.log(`Channel "${opts.channel}" not supported for direct messaging yet.`);
+    const to = opts.to || (config.owner.phone ? `${config.owner.phone}@c.us` : null);
+    if (!to) {
+      console.error('No recipient. Use --to <phone>@c.us or set OWNER_PHONE in .env');
+      process.exit(1);
     }
+
+    const message = {
+      id: msgId,
+      channel: opts.channel,
+      to: to.includes('@') ? to : `${to}@c.us`,
+      text,
+      timestamp: Date.now(),
+      metadata: {}
+    };
+
+    const dropFile = join(dropDir, `${msgId}.json`);
+    writeFileSync(dropFile, JSON.stringify(message, null, 2));
+    console.log(`Message queued: ${dropFile}`);
+
+    // Check if daemon is running
+    if (existsSync(paths.pid)) {
+      const pid = readFileSync(paths.pid, 'utf-8').trim();
+      if (pid) {
+        try {
+          process.kill(parseInt(pid), 0); // test if alive
+          console.log(`Daemon running (PID: ${pid}). Message will be sent shortly.`);
+          // Wait for the drop file to be consumed
+          for (let i = 0; i < 15; i++) {
+            await new Promise(r => setTimeout(r, 1000));
+            if (!existsSync(dropFile)) {
+              console.log('Message sent.');
+              process.exit(0);
+            }
+          }
+          console.log('Message queued but not yet consumed. Check: sapienx logs');
+          process.exit(0);
+        } catch {}
+      }
+    }
+    console.log('Daemon not running. Start it with: sapienx start');
+    console.log('The message will be sent when the daemon starts.');
   });
 
 // sapienx skills
