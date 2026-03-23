@@ -14,6 +14,14 @@ set -e
 REPO_URL="https://github.com/LogicalSapien/sapienx.git"
 INSTALL_DIR="${SAPIENX_DIR:-$HOME/sapienx}"
 
+# Detect if running interactively (TTY) or piped (curl | bash)
+INTERACTIVE=false
+if [ -t 0 ]; then
+  INTERACTIVE=true
+fi
+
+TOTAL_STEPS=9
+
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║       SapienX Setup Script           ║"
@@ -24,13 +32,13 @@ echo ""
 # 1. Check OS
 # -------------------------------------------
 OS="$(uname -s)"
-echo "[1/8] Detected OS: $OS"
+echo "[1/$TOTAL_STEPS] Detected OS: $OS"
 
 # -------------------------------------------
 # 2. Install Node.js if missing
 # -------------------------------------------
 echo ""
-echo "[2/8] Checking Node.js..."
+echo "[2/$TOTAL_STEPS] Checking Node.js..."
 if command -v node &> /dev/null; then
   NODE_VERSION=$(node --version)
   echo "  Node.js $NODE_VERSION found."
@@ -64,7 +72,7 @@ fi
 # 3. Install Claude Code CLI if missing
 # -------------------------------------------
 echo ""
-echo "[3/8] Checking Claude Code CLI..."
+echo "[3/$TOTAL_STEPS] Checking Claude Code CLI..."
 if command -v claude &> /dev/null; then
   echo "  Claude CLI: $(claude --version 2>&1 | head -1)"
 else
@@ -77,20 +85,25 @@ fi
 # 4. Authenticate Claude if needed
 # -------------------------------------------
 echo ""
-echo "[4/8] Checking Claude authentication..."
+echo "[4/$TOTAL_STEPS] Checking Claude authentication..."
 if claude --version &> /dev/null; then
   echo "  Claude CLI is working."
 else
-  echo "  Claude CLI needs authentication."
-  echo "  Running: claude login"
-  claude login
+  if [ "$INTERACTIVE" = true ]; then
+    echo "  Claude CLI needs authentication."
+    echo "  Running: claude login"
+    claude login
+  else
+    echo "  Claude CLI needs authentication."
+    echo "  Run after setup: claude login"
+  fi
 fi
 
 # -------------------------------------------
 # 5. Clone or update repo
 # -------------------------------------------
 echo ""
-echo "[5/8] Setting up SapienX code..."
+echo "[5/$TOTAL_STEPS] Setting up SapienX code..."
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "  SapienX repo found at $INSTALL_DIR. Pulling latest..."
   cd "$INSTALL_DIR"
@@ -111,7 +124,7 @@ fi
 # 6. Install dependencies
 # -------------------------------------------
 echo ""
-echo "[6/8] Installing dependencies..."
+echo "[6/$TOTAL_STEPS] Installing dependencies..."
 npm install
 
 # Create data directories
@@ -124,7 +137,7 @@ fi
 # 7. Install pm2 for process management
 # -------------------------------------------
 echo ""
-echo "[7/9] Checking pm2..."
+echo "[7/$TOTAL_STEPS] Checking pm2..."
 if command -v pm2 &> /dev/null; then
   echo "  pm2 $(pm2 --version) found."
 else
@@ -140,7 +153,7 @@ fi
 # 8. Link sapienx command globally
 # -------------------------------------------
 echo ""
-echo "[8/9] Linking sapienx command..."
+echo "[8/$TOTAL_STEPS] Linking sapienx command..."
 if npm link 2>/dev/null; then
   echo "  'sapienx' command available globally."
 else
@@ -156,27 +169,46 @@ else
 fi
 
 # -------------------------------------------
-# 9. Run interactive configure
+# 9. Configure
 # -------------------------------------------
 echo ""
-echo "[9/9] Running SapienX configuration..."
-echo ""
-sapienx configure 2>/dev/null || node bin/sapienx configure
+echo "[9/$TOTAL_STEPS] Configuration..."
+
+if [ "$INTERACTIVE" = true ]; then
+  # Running interactively (e.g. bash scripts/setup.sh) — launch configure wizard
+  echo ""
+  sapienx configure 2>/dev/null || node bin/sapienx configure
+else
+  # Running non-interactively (e.g. curl | bash) — skip interactive prompts
+  if [ -f .env ]; then
+    echo "  Existing .env found — keeping current configuration."
+  else
+    echo "  Creating default .env (customize later with: sapienx configure)"
+    cp .env.example .env
+  fi
+fi
 
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║       SapienX Setup Complete!        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
-echo "Commands:"
+echo "Quick start:"
+echo "  cd $INSTALL_DIR"
+echo "  sapienx configure  — Set up WhatsApp, owner info, API keys"
 echo "  sapienx start      — Start daemon (WhatsApp in background)"
 echo "  sapienx tui        — Interactive terminal chat"
+echo ""
+echo "Other commands:"
 echo "  sapienx status     — Check status"
 echo "  sapienx logs       — View logs"
-echo "  sapienx configure  — Reconfigure settings"
 echo "  sapienx stop       — Stop daemon"
 echo "  sapienx restart    — Restart daemon"
 echo "  sapienx upgrade    — Update to latest version"
 echo ""
 echo "Install dir: $INSTALL_DIR"
+if [ "$INTERACTIVE" = false ]; then
+  echo ""
+  echo ">>> Next step: cd $INSTALL_DIR && sapienx configure"
+fi
 echo ""
