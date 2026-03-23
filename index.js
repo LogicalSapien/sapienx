@@ -108,6 +108,18 @@ async function main() {
   }
 }
 
+// Handle unhandled rejections from whatsapp-web.js internals
+// (e.g., puppeteer execution context destroyed during QR scan navigation)
+process.on('unhandledRejection', (err) => {
+  const msg = err?.message || String(err);
+  if (msg.includes('Execution context was destroyed') || msg.includes('navigation')) {
+    console.log('[WhatsApp] Browser navigated during auth — this is normal. Reconnecting...');
+    // Don't crash — whatsapp-web.js will recover on its own
+    return;
+  }
+  console.error('Unhandled rejection:', err);
+});
+
 main().catch((err) => {
   console.error('Fatal error:', err);
   process.exit(1);
