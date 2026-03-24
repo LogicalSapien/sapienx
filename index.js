@@ -120,10 +120,16 @@ async function main() {
   const outboxTimer = setInterval(pollOutbox, 2000);
   pollOutbox(); // Check immediately
 
+  // 10.5. Periodic media temp cleanup (every 30 minutes, files older than 1 hour)
+  const { Transcriber } = await import('./core/transcriber.js');
+  const mediaCleaner = new Transcriber();
+  const mediaCleanupTimer = setInterval(() => mediaCleaner.cleanupOldMedia(), 30 * 60 * 1000);
+
   // 11. Graceful shutdown
   const shutdown = async () => {
     console.log('\nShutting down SapienX...');
     clearInterval(outboxTimer);
+    clearInterval(mediaCleanupTimer);
     scheduler.stopAll();
     deliveryQueue.stopAll();
     for (const ch of channels) await ch.stop();

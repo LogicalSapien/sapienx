@@ -1,4 +1,4 @@
-import { writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
+import { writeFileSync, mkdirSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
@@ -108,8 +108,8 @@ export class Transcriber {
     try {
       const baseName = wavPath.replace(/\.[^.]+$/, '');
       const txtOutput = `/tmp/${wavPath.split('/').pop().replace(/\.[^.]+$/, '')}.txt`;
-      execSync(`whisper "${wavPath}" --model base --language en --output_format txt --output_dir /tmp 2>/dev/null`, {
-        timeout: 120000
+      execSync(`whisper "${wavPath}" --model small --language en --output_format txt --output_dir /tmp 2>/dev/null`, {
+        timeout: 180000
       });
       const { readFileSync: readF } = await import('node:fs');
       const text = readF(txtOutput, 'utf-8').trim();
@@ -181,5 +181,27 @@ export class Transcriber {
     if (wavPath !== filePath) {
       try { unlinkSync(wavPath); } catch {}
     }
+  }
+
+  /**
+   * Clean up old media files (older than maxAgeMs, default 1 hour)
+   */
+  cleanupOldMedia(maxAgeMs = 3600000) {
+    try {
+      const files = readdirSync(paths.mediaTmp);
+      const now = Date.now();
+      let cleaned = 0;
+      for (const file of files) {
+        const filePath = join(paths.mediaTmp, file);
+        try {
+          const stat = statSync(filePath);
+          if (now - stat.mtimeMs > maxAgeMs) {
+            unlinkSync(filePath);
+            cleaned++;
+          }
+        } catch {}
+      }
+      if (cleaned > 0) console.log(`[Transcriber] Cleaned ${cleaned} old media file(s)`);
+    } catch {}
   }
 }

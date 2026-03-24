@@ -59,15 +59,18 @@ export class Gateway {
       console.log(`[Gateway] Group: ${groupId} policy=${policy}`);
 
       if (policy === 'ignore') {
-        return; // drop all group messages
+        console.log(`[Gateway] Dropped group message (policy=ignore): ${groupId}`);
+        return;
       }
 
       if (policy === 'allowlist') {
-        // Check per-group config (old style) or allowedGroups list
         const groupConfig = this.config.groups?.[groupId];
         const allowedGroups = this.config.allowedGroups || [];
         const isAllowed = (groupConfig && groupConfig.enabled) || allowedGroups.includes(groupId);
-        if (!isAllowed) return;
+        if (!isAllowed) {
+          console.log(`[Gateway] Dropped group message (not in allowlist): ${groupId}`);
+          return;
+        }
         this.bus.emit('message:routed', { ...msg, groupConfig });
         return;
       }
