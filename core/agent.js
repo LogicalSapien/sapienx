@@ -304,6 +304,13 @@ export class Agent {
     return this.cliAdapters[this.config.cli.default];
   }
 
+  _getFallbackAdapters(primaryName) {
+    // Return other available adapters for failover
+    return Object.entries(this.cliAdapters)
+      .filter(([name]) => name !== primaryName)
+      .map(([name, adapter]) => ({ name, adapter }));
+  }
+
   _resolveModel(session, msg) {
     // Resolution order: session > group > channel > adapter > global
     if (session.modelOverride) return session.modelOverride;
@@ -336,19 +343,16 @@ export class Agent {
       });
     }
 
-    // Send typing indicator
     this._sendTyping(msg);
-
     this._activeInvocations++;
+
     const model = this._resolveModel(session, msg);
     const systemPrompt = this._buildSystemPrompt(session, msg);
-
     const history = this._getConversationHistory(msg.channel, msg.from);
     const fullPrompt = history
       ? `${systemPrompt}\n\n--- Conversation History ---\n${history}\n\nUser: ${msg.text}`
       : `${systemPrompt}\n\nUser: ${msg.text}`;
 
-    // Keep typing indicator alive while Claude is thinking
     const typingInterval = setInterval(() => this._sendTyping(msg), 5000);
     let replied = false;
 
@@ -362,12 +366,42 @@ export class Agent {
       this._addToHistory(msg.channel, msg.from, msg.text, result);
       replied = true;
     } catch (err) {
-      if (err.isAuthError) {
-        console.error('[Agent] Claude auth error — login needed');
-        this._reply(msg, '⚠️ Claude CLI session expired. SSH into the server and run: claude login');
-        replied = true;
+      // On auth error or rate limit, try failover to another CLI
+      if (err.isAuthError || err.isRateLimit) {
+        const primaryName = adapter.name;
+        const reason = err.isAuthError ? 'auth expired' : 'rate limited';
+        console.error(`[Agent] ${primaryName} ${reason} — trying failover`);
+
+        const fallbacks = this._getFallbackAdapters(primaryName);
+        let failedOver = false;
+
+        for (const { name, adapter: fallback } of fallbacks) {
+          try {
+            console.log(`[Agent] Failing over to ${name}`);
+            let result = await fallback.invoke(fullPrompt, session.sessionId, {
+              onChunk: () => this._sendTyping(msg)
+            });
+            result = await this._extractAndExecuteCommands(result, msg, session);
+            this._reply(msg, `[Switched to ${name} — ${primaryName} ${reason}]\n\n${result}`);
+            this._addToHistory(msg.channel, msg.from, msg.text, result);
+            replied = true;
+            failedOver = true;
+            break;
+          } catch (fbErr) {
+            console.error(`[Agent] Failover to ${name} also failed: ${fbErr.message?.substring(0, 100)}`);
+          }
+        }
+
+        if (!failedOver) {
+          if (err.isAuthError) {
+            this._reply(msg, `⚠️ ${primaryName} session expired. No fallback CLI available. SSH in and run: claude login`);
+          } else {
+            this._reply(msg, `⚠️ ${primaryName} rate limited. No fallback CLI available. Try again later.`);
+          }
+          replied = true;
+        }
       } else {
-        // Retry once for non-auth errors
+        // Non-auth, non-rate-limit error — retry once with same adapter
         try {
           let result = await adapter.invoke(fullPrompt, session.sessionId, { model });
           result = await this._extractAndExecuteCommands(result, msg, session);
@@ -375,9 +409,7 @@ export class Agent {
           this._addToHistory(msg.channel, msg.from, msg.text, result);
           replied = true;
         } catch (retryErr) {
-          if (retryErr.isAuthError) {
-            this._reply(msg, '⚠️ Claude CLI session expired. SSH into the server and run: claude login');
-          } else if (retryErr.message?.includes('timed out')) {
+          if (retryErr.message?.includes('timed out')) {
             this._reply(msg, '⏱️ Request timed out. Try a simpler question or try again.');
           } else {
             this._reply(msg, `Something went wrong: ${retryErr.message?.substring(0, 200)}`);
@@ -389,7 +421,6 @@ export class Agent {
     } finally {
       clearInterval(typingInterval);
       this._activeInvocations--;
-      // Safety net — always send something back
       if (!replied) {
         this._reply(msg, 'Something went wrong processing your message. Please try again.');
       }

@@ -33,12 +33,8 @@ program
   .action(async () => {
     await ensureSetup();
     paths.ensureDirs();
-    try {
-      execSync(`pm2 start ${join(projectRoot, 'ecosystem.config.js')}`, {
-        stdio: 'inherit',
-        cwd: projectRoot
-      });
-    } catch {
+    // Skip pm2 — use direct daemon (pm2 has path issues with npm global installs)
+    {
       console.log('Starting SapienX daemon...');
       // Clear old log for fresh start
       writeFileSync(paths.log, '');
@@ -86,13 +82,6 @@ program
   .command('stop')
   .description('Stop SapienX daemon')
   .action(() => {
-    // Try pm2 first
-    try {
-      execSync('pm2 stop sapienx 2>/dev/null', { stdio: 'inherit' });
-      return;
-    } catch {}
-
-    // Fall back to PID file
     if (existsSync(paths.pid)) {
       const pid = readFileSync(paths.pid, 'utf-8').trim();
       if (!pid) {

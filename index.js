@@ -41,16 +41,25 @@ async function main() {
   const skills = await skillLoader.loadAll();
   console.log(`Loaded ${skills.length} skill(s): ${skills.map(s => s.name).join(', ')}`);
 
-  // 5. CLI adapters
+  // 5. CLI adapters — register all configured adapters
   const cliAdapters = {};
-  const claudeAdapterConfig = config.cli.adapters.claude;
-  if (claudeAdapterConfig) {
-    const claude = new ClaudeAdapter(claudeAdapterConfig);
-    if (claude.isAvailable()) {
-      cliAdapters.claude = claude;
-      console.log('Claude CLI adapter: ready');
+  const adapterClasses = { claude: ClaudeAdapter };
+
+  // Dynamically load optional adapters
+  try {
+    const { CodexAdapter } = await import('./cli-adapters/codex.js');
+    adapterClasses.codex = CodexAdapter;
+  } catch {}
+
+  for (const [name, adapterConfig] of Object.entries(config.cli.adapters)) {
+    const AdapterClass = adapterClasses[name];
+    if (!AdapterClass) continue;
+    const adapter = new AdapterClass(adapterConfig);
+    if (adapter.isAvailable()) {
+      cliAdapters[name] = adapter;
+      console.log(`${name} CLI adapter: ready`);
     } else {
-      console.warn('Claude CLI not found in PATH. Run: npm install -g @anthropic-ai/claude-code');
+      console.log(`${name} CLI adapter: not installed (skipping)`);
     }
   }
 

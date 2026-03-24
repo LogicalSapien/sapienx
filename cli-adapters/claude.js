@@ -86,8 +86,12 @@ export class ClaudeAdapter extends BaseAdapter {
           const isAuthError = lowerErr.includes('login') || lowerErr.includes('auth') ||
             lowerErr.includes('token') || lowerErr.includes('expired') ||
             lowerErr.includes('unauthorized') || lowerErr.includes('403');
+          const isRateLimit = lowerErr.includes('rate') || lowerErr.includes('limit') ||
+            lowerErr.includes('429') || lowerErr.includes('quota') ||
+            lowerErr.includes('too many');
           const err = new Error(`Claude CLI exited with code ${code}: ${stderr}`);
           err.isAuthError = isAuthError;
+          err.isRateLimit = isRateLimit;
           reject(err);
         } else {
           resolve(chunks.join(''));
