@@ -362,9 +362,15 @@ export class Agent {
         onChunk: () => this._sendTyping(msg)
       });
       result = await this._extractAndExecuteCommands(result, msg, session);
-      this._reply(msg, result);
-      this._addToHistory(msg.channel, msg.from, msg.text, result);
-      replied = true;
+      // Detect [SILENT] — Claude chose not to respond (group chat intelligence)
+      if (result.trim() === '[SILENT]' || result.trim().toLowerCase().startsWith('[silent]')) {
+        console.log(`[Agent] Silent response — suppressing reply (group: ${msg.metadata?.isGroup})`);
+        replied = true;
+      } else {
+        this._reply(msg, result);
+        this._addToHistory(msg.channel, msg.from, msg.text, result);
+        replied = true;
+      }
     } catch (err) {
       // On auth error or rate limit, try failover to another CLI
       if (err.isAuthError || err.isRateLimit) {
